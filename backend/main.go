@@ -67,10 +67,11 @@ func main() {
 	ebpfService := services.NewEBPFService()
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
 
-	// Check if eBPF should be enabled from settings
-	if err := db.First(&settings, 1).Error; err == nil && settings.EBPFEnabled {
-		ebpfService.Enable()
-		system.Info("eBPF XDP monitoring enabled")
+	// Always try to enable eBPF XDP monitoring
+	if err := ebpfService.Enable(); err != nil {
+		system.Warn("eBPF XDP monitoring failed to start: %v (falling back to simulation)", err)
+	} else {
+		system.Info("eBPF XDP monitoring enabled successfully")
 	}
 
 	// 3. Setup Handlers
@@ -133,6 +134,9 @@ func main() {
 
 	// Traffic Data (eBPF)
 	protected.Get("/traffic/data", h.GetTrafficData)
+
+	// Server Info (Public IP, etc.)
+	protected.Get("/server/info", h.GetServerInfo)
 
 	// 5. Serve Static Files (Frontend)
 	frontendPath := "./frontend/dist"

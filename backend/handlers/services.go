@@ -54,6 +54,15 @@ func (h *Handler) CreateService(c *fiber.Ctx) error {
 	system.Info("Service created: %s", service.Name)
 	AddEvent("success", "Service created: "+service.Name)
 
+	// Auto-apply firewall rules after service creation
+	if h.Firewall != nil {
+		if err := h.Firewall.ApplyRules(); err != nil {
+			system.Warn("Failed to auto-apply firewall rules: %v", err)
+		} else {
+			system.Info("Firewall rules auto-applied for new service")
+		}
+	}
+
 	return c.Status(http.StatusCreated).JSON(service)
 }
 

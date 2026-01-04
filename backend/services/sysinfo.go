@@ -230,3 +230,33 @@ func (s *SysInfoService) GetNetworkIO() (rxBytes, txBytes uint64) {
 
 	return 0, 0
 }
+
+// GetPublicIP returns the server's public IP address
+func (s *SysInfoService) GetPublicIP() string {
+	if runtime.GOOS != "linux" {
+		return "127.0.0.1"
+	}
+
+	// Try to use curl to get public IP
+	out, err := exec.Command("curl", "-s", "--max-time", "3", "https://icanhazip.com").Output()
+	if err == nil && len(out) > 0 {
+		return strings.TrimSpace(string(out))
+	}
+
+	// Fallback: try ipify
+	out, err = exec.Command("curl", "-s", "--max-time", "3", "https://api.ipify.org").Output()
+	if err == nil && len(out) > 0 {
+		return strings.TrimSpace(string(out))
+	}
+
+	// Fallback: hostname -I (first IP)
+	out, err = exec.Command("hostname", "-I").Output()
+	if err == nil && len(out) > 0 {
+		parts := strings.Fields(string(out))
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+
+	return "0.0.0.0"
+}

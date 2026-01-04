@@ -214,3 +214,15 @@ Chain OUTPUT (policy ACCEPT)`
 		"rules": output,
 	})
 }
+
+// GetServerInfo returns server's public IP and other info
+func (h *Handler) GetServerInfo(c *fiber.Ctx) error {
+	sysInfo := services.NewSysInfoService()
+	publicIP := sysInfo.GetPublicIP()
+
+	return c.JSON(fiber.Map{
+		"public_ip":      publicIP,
+		"wireguard_port": 51820,
+		"wg_subnet":      "10.200.0.0/24",
+	})
+}
