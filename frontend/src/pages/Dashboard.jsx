@@ -1,26 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Grid, Card, CardContent, Typography, LinearProgress, Chip, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Shield, CloudQueue, Block, Speed, Terminal, Lan, CheckCircle, Warning, Error as ErrorIcon, Info } from '@mui/icons-material';
+import { Shield, CloudQueue, Block, Speed, Terminal, CheckCircle, Warning, Error as ErrorIcon, Info } from '@mui/icons-material';
 import client from '../api/client';
-
-const generateData = () => {
-    const now = new Date();
-    return Array.from({ length: 60 }, (_, i) => ({
-        time: new Date(now - (59 - i) * 2000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        allowed: Math.floor(Math.random() * 500) + 200,
-        blocked: Math.floor(Math.random() * 100) + 10,
-    }));
-};
-
-const generateIPTraffic = () => [
-    { ip: '121.134.56.78', country: 'KR', pps: 245, status: 'allowed', lastSeen: '2s ago' },
-    { ip: '45.33.32.156', country: 'US', pps: 1520, status: 'blocked', lastSeen: '1s ago' },
-    { ip: '203.247.51.82', country: 'KR', pps: 189, status: 'allowed', lastSeen: '5s ago' },
-    { ip: '185.220.101.45', country: 'DE', pps: 890, status: 'blocked', lastSeen: '3s ago' },
-    { ip: '118.235.89.21', country: 'JP', pps: 156, status: 'allowed', lastSeen: '8s ago' },
-    { ip: '91.132.147.89', country: 'RU', pps: 2100, status: 'blocked', lastSeen: '1s ago' },
-];
 
 const eventIcons = {
     success: <CheckCircle sx={{ fontSize: 12, color: '#00c853' }} />,
@@ -30,53 +12,100 @@ const eventIcons = {
 };
 
 export default function Dashboard() {
-    const [data, setData] = useState(generateData());
-    const [stats, setStats] = useState({ connections: 1245, blocked: 8958, origins: 3, cpu: 45, memory: 62, disk: 35, network: 128 });
+    const [trafficData, setTrafficData] = useState([]);
+    const [stats, setStats] = useState({ connections: 0, blocked: 0, origins: 0, cpu: 0, memory: 0, disk: 0 });
     const [events, setEvents] = useState([]);
-    const [ipTraffic, setIpTraffic] = useState(generateIPTraffic());
     const [requiredPorts, setRequiredPorts] = useState([]);
     const [firewallRules, setFirewallRules] = useState('');
     const [mockMode, setMockMode] = useState(true);
+    const [wireguardStatus, setWireguardStatus] = useState(null);
+    const prevStats = useRef({ allowed: 0, blocked: 0 });
 
-    useEffect(() => {
-        const fetchStatus = async () => {
-            try {
-                const res = await client.get('/status');
-                setStats(s => ({ ...s, connections: res.data.connections || s.connections, cpu: res.data.cpu_usage || s.cpu, memory: res.data.memory_usage || s.memory }));
-                setEvents(res.data.events || []);
-                setRequiredPorts(res.data.required_ports || []);
-                setMockMode(res.data.mock_mode);
-            } catch (e) {
-                setEvents([
-                    { time: new Date().toLocaleTimeString(), type: 'success', message: 'Origin-001 connected' },
-                    { time: new Date().toLocaleTimeString(), type: 'error', message: 'Blocked SYN flood from 45.33.32.156' },
-                    { time: new Date().toLocaleTimeString(), type: 'info', message: 'GeoIP database updated' },
-                    { time: new Date().toLocaleTimeString(), type: 'warning', message: 'High traffic on port 20001' },
-                ]);
-                setRequiredPorts([
-                    { port: 51820, protocol: 'UDP', service: 'WireGuard', description: 'VPN Tunnel' },
-                    { port: 20001, protocol: 'UDP', service: 'Game', description: 'Reforger Game' },
-                    { port: 17777, protocol: 'UDP', service: 'Browser', description: 'Server Browser' },
-                ]);
-            }
-        };
-        fetchStatus();
-        const fetchFirewall = async () => {
-            try { const res = await client.get('/firewall/status'); setFirewallRules(res.data.rules || ''); } catch (e) { setFirewallRules('Mock rules'); }
-        };
-        fetchFirewall();
-    }, []);
+    // Fetch system status from backend
+    const fetchStatus = async () => {
+        try {
+            const res = await client.get('/status');
+            const data = res.data;
 
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setData(prev => {
-                const newPoint = { time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), allowed: Math.floor(Math.random() * 500) + 200, blocked: Math.floor(Math.random() * 100) + 10 };
-                return [...prev.slice(1), newPoint];
+            setStats({
+                connections: data.connections || 0,
+                blocked: data.blocked_count || 0,
+                origins: data.origins_count || 0,
+                cpu: data.cpu_usage || 0,
+                memory: data.memory_usage || 0,
+                disk: data.disk_usage || 0,
             });
-            setStats(prev => ({ ...prev, connections: Math.max(100, prev.connections + Math.floor(Math.random() * 40) - 20), blocked: prev.blocked + Math.floor(Math.random() * 3) }));
-            setIpTraffic(prev => prev.map(ip => ({ ...ip, pps: Math.max(50, ip.pps + Math.floor(Math.random() * 100) - 50), lastSeen: ip.status === 'blocked' ? '1s ago' : `${Math.floor(Math.random() * 10)}s ago` })));
-        }, 2000);
-        return () => clearInterval(interval);
+            setEvents(data.events || []);
+            setRequiredPorts(data.required_ports || []);
+            setMockMode(data.mock_mode);
+
+            // Add traffic data point based on real connection counts
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            // Calculate delta for chart (simulated PPS based on connection changes)
+            const allowedDelta = Math.max(0, (data.connections || 0) - prevStats.current.allowed);
+            const blockedDelta = Math.max(0, (data.blocked_count || 0) - prevStats.current.blocked);
+
+            prevStats.current = { allowed: data.connections || 0, blocked: data.blocked_count || 0 };
+
+            setTrafficData(prev => {
+                const newPoint = {
+                    time: timeStr,
+                    allowed: data.connections || allowedDelta,
+                    blocked: blockedDelta,
+                };
+                const updated = [...prev, newPoint];
+                return updated.length > 60 ? updated.slice(-60) : updated;
+            });
+
+        } catch (e) {
+            console.error('Failed to fetch status:', e);
+            // Keep existing data on error
+        }
+    };
+
+    // Fetch firewall rules
+    const fetchFirewall = async () => {
+        try {
+            const res = await client.get('/firewall/status');
+            setFirewallRules(res.data.rules || '');
+        } catch (e) {
+            console.error('Failed to fetch firewall:', e);
+        }
+    };
+
+    // Fetch WireGuard status
+    const fetchWireGuard = async () => {
+        try {
+            const res = await client.get('/wireguard/status');
+            setWireguardStatus(res.data);
+        } catch (e) {
+            console.error('Failed to fetch WireGuard:', e);
+        }
+    };
+
+    // Initial fetch and periodic refresh
+    useEffect(() => {
+        fetchStatus();
+        fetchFirewall();
+        fetchWireGuard();
+
+        // Refresh every 3 seconds
+        const interval = setInterval(() => {
+            fetchStatus();
+        }, 3000);
+
+        // Refresh firewall and WireGuard every 10 seconds
+        const slowInterval = setInterval(() => {
+            fetchFirewall();
+            fetchWireGuard();
+        }, 10000);
+
+        return () => {
+            clearInterval(interval);
+            clearInterval(slowInterval);
+        };
     }, []);
 
     const StatCard = ({ icon, title, value, gradient }) => (
@@ -113,20 +142,20 @@ export default function Dashboard() {
                     <StatCard icon={<CloudQueue sx={{ color: '#fff', fontSize: 20 }} />} title="Active Origins" value={stats.origins} gradient="linear-gradient(135deg, #1b5e20, #00c853)" />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                    <StatCard icon={<Shield sx={{ color: '#fff', fontSize: 20 }} />} title="Defense Status" value="ACTIVE" gradient="linear-gradient(135deg, #e65100, #ffab00)" />
+                    <StatCard icon={<Shield sx={{ color: '#fff', fontSize: 20 }} />} title="Defense Status" value={mockMode ? "MOCK" : "ACTIVE"} gradient="linear-gradient(135deg, #e65100, #ffab00)" />
                 </Grid>
             </Grid>
 
-            {/* Row 2: Live Traffic Monitor (Full Width) - Direct child of Box for maximum expansion */}
+            {/* Row 2: Live Traffic Monitor (Full Width) */}
             <Card sx={{ bgcolor: '#111', borderRadius: 2, border: '1px solid #1a1a1a', height: 420, mb: 3, mx: 0 }}>
                 <CardContent sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
                     <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography variant="h6" sx={{ color: '#eee', fontWeight: 'bold' }}>📊 Live Traffic Monitor (PPS)</Typography>
-                        <Chip label="Global Traffic" size="small" color="primary" variant="outlined" />
+                        <Typography variant="h6" sx={{ color: '#eee', fontWeight: 'bold' }}>📊 Live Traffic Monitor</Typography>
+                        <Chip label={mockMode ? "Simulated" : "Real-time"} size="small" color={mockMode ? "warning" : "success"} variant="outlined" />
                     </Box>
                     <Box sx={{ flexGrow: 1 }}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={data} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                            <AreaChart data={trafficData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                                 <defs>
                                     <linearGradient id="allowedG" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#00e5ff" stopOpacity={0.4} /><stop offset="95%" stopColor="#00e5ff" stopOpacity={0} /></linearGradient>
                                     <linearGradient id="blockedG" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f50057" stopOpacity={0.4} /><stop offset="95%" stopColor="#f50057" stopOpacity={0} /></linearGradient>
@@ -135,7 +164,7 @@ export default function Dashboard() {
                                 <XAxis dataKey="time" stroke="#444" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={30} />
                                 <YAxis stroke="#444" tick={{ fontSize: 11 }} orientation="right" />
                                 <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #444', fontSize: 12, borderRadius: 4 }} />
-                                <Area type="monotone" dataKey="allowed" stroke="#00e5ff" strokeWidth={3} fill="url(#allowedG)" name="Allowed" animationDuration={500} />
+                                <Area type="monotone" dataKey="allowed" stroke="#00e5ff" strokeWidth={3} fill="url(#allowedG)" name="Connections" animationDuration={500} />
                                 <Area type="monotone" dataKey="blocked" stroke="#f50057" strokeWidth={3} fill="url(#blockedG)" name="Blocked" animationDuration={500} />
                             </AreaChart>
                         </ResponsiveContainer>
@@ -145,37 +174,53 @@ export default function Dashboard() {
 
             {/* Row 3: Unified Data Views */}
             <Grid container spacing={3}>
-                {/* Left Column: Per-IP Traffic (Expanded) */}
+                {/* Left Column: WireGuard Status */}
                 <Grid item xs={12} lg={8}>
-                    <Card sx={{ bgcolor: '#111', borderRadius: 2, border: '1px solid #1a1a1a', height: '100%', minHeight: 660 }}>
+                    <Card sx={{ bgcolor: '#111', borderRadius: 2, border: '1px solid #1a1a1a', height: '100%', minHeight: 400 }}>
                         <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                            <Typography variant="subtitle1" sx={{ mb: 2, color: '#888' }}>🌐 Per-IP Traffic (Real-time)</Typography>
-                            <TableContainer sx={{ flexGrow: 1 }}>
-                                <Table stickyHeader size="small">
-                                    <TableHead>
-                                        <TableRow sx={{ '& th': { bgcolor: '#111', color: '#888', fontWeight: 'bold', borderColor: '#222' } }}>
-                                            <TableCell>IP Address</TableCell>
-                                            <TableCell>Country</TableCell>
-                                            <TableCell align="right">PPS</TableCell>
-                                            <TableCell>Status</TableCell>
-                                            <TableCell>Last Seen</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {ipTraffic.map((row, i) => (
-                                            <TableRow key={i} sx={{ '& td': { borderColor: '#222', py: 1.5 } }}>
-                                                <TableCell sx={{ fontFamily: 'monospace', color: '#00e5ff', fontSize: 13 }}>{row.ip}</TableCell>
-                                                <TableCell sx={{ fontSize: 12 }}>{row.country}</TableCell>
-                                                <TableCell align="right" sx={{ color: row.pps > 500 ? '#f50057' : '#00c853', fontWeight: 'bold' }}>{row.pps}</TableCell>
-                                                <TableCell>
-                                                    <Chip label={row.status} size="small" sx={{ bgcolor: row.status === 'allowed' ? '#00c85320' : '#f5005720', color: row.status === 'allowed' ? '#00c853' : '#f50057', fontWeight: 'bold', height: 20 }} />
-                                                </TableCell>
-                                                <TableCell sx={{ color: '#666', fontSize: 12 }}>{row.lastSeen}</TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </TableContainer>
+                            <Typography variant="subtitle1" sx={{ mb: 2, color: '#888' }}>🔒 WireGuard Status</Typography>
+                            {wireguardStatus ? (
+                                <Box>
+                                    <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+                                        <Chip label={`Interface: ${wireguardStatus.interface || 'wg0'}`} size="small" color="primary" variant="outlined" />
+                                        <Chip label={`Port: ${wireguardStatus.listen_port || '51820'}`} size="small" color="info" variant="outlined" />
+                                        <Chip label={wireguardStatus.is_available ? 'Active' : 'Inactive'} size="small" color={wireguardStatus.is_available ? 'success' : 'error'} />
+                                    </Box>
+                                    <Typography variant="caption" sx={{ color: '#666', mb: 1, display: 'block' }}>
+                                        Public Key: <code style={{ color: '#00e5ff' }}>{wireguardStatus.public_key?.substring(0, 20)}...</code>
+                                    </Typography>
+                                    <Typography variant="subtitle2" sx={{ mt: 2, mb: 1, color: '#888' }}>Connected Peers ({wireguardStatus.peers?.length || 0})</Typography>
+                                    <TableContainer>
+                                        <Table size="small">
+                                            <TableHead>
+                                                <TableRow sx={{ '& th': { bgcolor: '#111', color: '#888', borderColor: '#222' } }}>
+                                                    <TableCell>Endpoint</TableCell>
+                                                    <TableCell>Allowed IPs</TableCell>
+                                                    <TableCell>Last Handshake</TableCell>
+                                                    <TableCell>Transfer</TableCell>
+                                                </TableRow>
+                                            </TableHead>
+                                            <TableBody>
+                                                {(wireguardStatus.peers || []).map((peer, i) => (
+                                                    <TableRow key={i} sx={{ '& td': { borderColor: '#222' } }}>
+                                                        <TableCell sx={{ color: '#00e5ff', fontFamily: 'monospace', fontSize: 11 }}>{peer.endpoint || 'N/A'}</TableCell>
+                                                        <TableCell sx={{ fontSize: 11 }}>{peer.allowed_ips || 'N/A'}</TableCell>
+                                                        <TableCell sx={{ fontSize: 11, color: '#888' }}>{peer.latest_handshake || 'Never'}</TableCell>
+                                                        <TableCell sx={{ fontSize: 11 }}>↓{peer.transfer_rx || '0'} ↑{peer.transfer_tx || '0'}</TableCell>
+                                                    </TableRow>
+                                                ))}
+                                                {(!wireguardStatus.peers || wireguardStatus.peers.length === 0) && (
+                                                    <TableRow>
+                                                        <TableCell colSpan={4} sx={{ color: '#666', textAlign: 'center' }}>No peers connected</TableCell>
+                                                    </TableRow>
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </TableContainer>
+                                </Box>
+                            ) : (
+                                <Typography sx={{ color: '#666' }}>Loading WireGuard status...</Typography>
+                            )}
                         </CardContent>
                     </Card>
                 </Grid>
@@ -188,7 +233,7 @@ export default function Dashboard() {
                         <Card sx={{ bgcolor: '#111', borderRadius: 2, border: '1px solid #1a1a1a' }}>
                             <CardContent sx={{ p: 2 }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1.5, color: '#888' }}>💻 System Resources</Typography>
-                                {[{ name: 'CPU Usage', val: stats.cpu, color: 'primary' }, { name: 'Memory Usage', val: stats.memory, color: 'success' }, { name: 'Disk I/O', val: stats.disk, color: 'warning' }].map(s => (
+                                {[{ name: 'CPU Usage', val: stats.cpu, color: 'primary' }, { name: 'Memory Usage', val: stats.memory, color: 'success' }, { name: 'Disk Usage', val: stats.disk, color: 'warning' }].map(s => (
                                     <Box key={s.name} sx={{ mb: 1.5 }}>
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                                             <Typography variant="caption" sx={{ color: '#ccc' }}>{s.name}</Typography>
@@ -205,9 +250,11 @@ export default function Dashboard() {
                             <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1, color: '#888' }}><Terminal sx={{ fontSize: 14, mr: 0.5, verticalAlign: 'middle' }} />System Events</Typography>
                                 <Box sx={{ flexGrow: 1, overflow: 'auto', fontFamily: 'monospace', fontSize: 11 }}>
-                                    {events.map((e, i) => (
+                                    {events.length === 0 ? (
+                                        <Typography variant="caption" sx={{ color: '#666' }}>No events yet</Typography>
+                                    ) : events.map((e, i) => (
                                         <Box key={i} sx={{ display: 'flex', alignItems: 'center', py: 0.5, borderBottom: '1px solid #222' }}>
-                                            {eventIcons[e.type]}
+                                            {eventIcons[e.type] || eventIcons.info}
                                             <Typography variant="caption" sx={{ ml: 1, color: '#666', minWidth: 55 }}>{e.time}</Typography>
                                             <Typography variant="caption" sx={{ ml: 1, color: '#ccc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.message}</Typography>
                                         </Box>
@@ -227,7 +274,7 @@ export default function Dashboard() {
                                     '&::-webkit-scrollbar-track': { background: '#111' },
                                     '&::-webkit-scrollbar-thumb': { background: '#333', borderRadius: '4px' }
                                 }}>
-                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{firewallRules || '# No rules active or mock mode.'}</pre>
+                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{firewallRules || '# Loading iptables rules...'}</pre>
                                 </Paper>
                             </CardContent>
                         </Card>
