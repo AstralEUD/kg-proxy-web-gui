@@ -15,7 +15,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Backend build failed"; exit 1 }
 # 2. Build Frontend
 Write-Host "`n[2/4] Building Frontend (npm)..." -ForegroundColor Yellow
 Check-Location "frontend" {
-    if (!(Test-Path "node_modules")) { npm install }
+    if (!(Test-Path "node_modules")) { npm install --legacy-peer-deps }
     npm run build
 }
 if ($LASTEXITCODE -ne 0) { Write-Error "Frontend build failed"; exit 1 }
