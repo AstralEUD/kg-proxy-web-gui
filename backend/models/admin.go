@@ -14,9 +14,16 @@ type Admin struct {
 	LockedUntil       *time.Time `json:"-"`
 }
 
-// SystemSettings for Security Levels
+// SecuritySettings for Policy/Firewall configuration
 type SecuritySettings struct {
-	ID               uint   `gorm:"primaryKey"`
-	Level            string `gorm:"default:'standard'"` // standard, high, emergency
-	AllowedCountries string `gorm:"default:'KR'"`       // CSV: KR,JP,US
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	GlobalProtection  bool      `gorm:"default:true" json:"global_protection"`
+	BlockVPN          bool      `gorm:"default:false" json:"block_vpn"`
+	BlockTOR          bool      `gorm:"default:false" json:"block_tor"`
+	SYNCookies        bool      `gorm:"default:true" json:"syn_cookies"`
+	ProtectionLevel   int       `gorm:"default:2" json:"protection_level"`       // 0=low, 1=standard, 2=high
+	GeoAllowCountries string    `gorm:"default:'KR'" json:"geo_allow_countries"` // Comma-separated country codes
+	SmartBanning      bool      `gorm:"default:false" json:"smart_banning"`
+	EBPFEnabled       bool      `gorm:"default:false" json:"ebpf_enabled"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }

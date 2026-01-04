@@ -58,6 +58,10 @@ export default function Origins() {
             });
             setActiveStep(1);
         },
+        onError: (error) => {
+            console.error('Failed to create origin:', error);
+            alert(`Failed to create origin: ${error.response?.data?.error || error.message || 'Unknown error'}`);
+        },
     });
 
     const deleteMutation = useMutation({

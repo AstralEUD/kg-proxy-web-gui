@@ -106,6 +106,10 @@ func main() {
 	protected.Post("/services", h.CreateService)
 	protected.Delete("/services/:id", h.DeleteService)
 
+	// Security Settings
+	protected.Get("/security/settings", h.GetSecuritySettings)
+	protected.Put("/security/settings", h.UpdateSecuritySettings)
+
 	// 5. Serve Static Files (Frontend)
 	frontendPath := "./frontend/dist"
 	if _, err := os.Stat("/opt/kg-proxy/frontend/dist"); err == nil {

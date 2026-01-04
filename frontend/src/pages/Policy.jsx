@@ -1,42 +1,78 @@
-import React, { useState } from 'react';
-import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, IconButton, Alert, Snackbar } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, IconButton, Alert, Snackbar, CircularProgress } from '@mui/material';
 import { Shield, Public, GppGood, Bolt, Add, Delete, CheckCircle } from '@mui/icons-material';
 import client from '../api/client';
 
 export default function Policy() {
-    const [settings, setSettings] = useState({
-        global_protection: true,
-        block_vpn: false,
-        block_tor: false,
-        syn_cookies: true,
-        protection_level: 2,
-        geo_allow_countries: ['KR'], // Whitelist mode: Default allow Korea
-        smart_banning: false,
-        ebpf_enabled: false
-    });
-
-    // Custom IP Block List
-    const [blockedIps, setBlockedIps] = useState(['45.33.22.11', '192.168.0.55']);
+    const queryClient = useQueryClient();
     const [newIp, setNewIp] = useState('');
     const [error, setError] = useState('');
     const [notification, setNotification] = useState({ open: false, message: '' });
+    const [blockedIps, setBlockedIps] = useState([]);
 
     const allCountries = ["KR", "US", "CN", "JP", "DE", "RU", "BR", "GB", "CA", "AU", "IN", "FR", "ID", "VN"];
 
+    // Fetch settings from backend
+    const { data: settings, isLoading } = useQuery({
+        queryKey: ['security-settings'],
+        queryFn: async () => {
+            const res = await client.get('/security/settings');
+            // Parse geo_allow_countries from CSV string to array
+            const data = res.data;
+            return {
+                ...data,
+                geo_allow_countries: data.geo_allow_countries ? data.geo_allow_countries.split(',') : ['KR']
+            };
+        },
+    });
+
+    // Fetch blocked IPs from DB
+    useEffect(() => {
+        const fetchBlockedIps = async () => {
+            try {
+                // Assuming we have an endpoint to get manual blocks
+                // For now, we'll just initialize empty
+                setBlockedIps([]);
+            } catch (err) {
+                console.error('Failed to load blocked IPs:', err);
+            }
+        };
+        fetchBlockedIps();
+    }, []);
+
+    // Update mutation
+    const updateMutation = useMutation({
+        mutationFn: (data) => client.put('/security/settings', data),
+        onSuccess: () => {
+            queryClient.invalidateQueries(['security-settings']);
+            setNotification({ open: true, message: 'Firewall policies applied successfully!' });
+        },
+        onError: (err) => {
+            alert('Error applying policies: ' + (err.response?.data?.error || err.message));
+        },
+    });
+
     const handleChange = (name) => (e) => {
-        setSettings({ ...settings, [name]: e.target.checked });
+        queryClient.setQueryData(['security-settings'], (old) => ({
+            ...old,
+            [name]: e.target.checked
+        }));
     };
 
     const handleSlider = (name) => (e, val) => {
-        setSettings({ ...settings, [name]: val });
+        queryClient.setQueryData(['security-settings'], (old) => ({
+            ...old,
+            [name]: val
+        }));
     };
 
     const handleCountryToggle = (code) => {
-        setSettings(prev => {
-            const list = prev.geo_allow_countries.includes(code)
-                ? prev.geo_allow_countries.filter(c => c !== code)
-                : [...prev.geo_allow_countries, code];
-            return { ...prev, geo_allow_countries: list };
+        queryClient.setQueryData(['security-settings'], (old) => {
+            const list = old.geo_allow_countries.includes(code)
+                ? old.geo_allow_countries.filter(c => c !== code)
+                : [...old.geo_allow_countries, code];
+            return { ...old, geo_allow_countries: list };
         });
     };
 
@@ -47,17 +83,14 @@ export default function Policy() {
 
     const handleAddIp = () => {
         if (!newIp) return;
-
         if (!validateIP(newIp)) {
             setError('Invalid IP address format (e.g., 192.168.1.1)');
             return;
         }
-
         if (blockedIps.includes(newIp)) {
             setError('IP is already in the blacklist');
             return;
         }
-
         setBlockedIps([...blockedIps, newIp]);
         setNewIp('');
         setError('');
@@ -67,16 +100,25 @@ export default function Policy() {
         setBlockedIps(blockedIps.filter(i => i !== ip));
     };
 
-    const handleApply = async () => {
-        try {
-            // Send to backend
-            // Note: logic changed to 'geo_allow_countries' (Whitelist)
-            await client.post('/firewall/apply', { ...settings, blocked_ips: blockedIps });
-            setNotification({ open: true, message: 'Firewall policies applied successfully!' });
-        } catch (e) {
-            alert('Error applying policies');
-        }
+    const handleApply = () => {
+        if (!settings) return;
+        updateMutation.mutate({
+            ...settings,
+            blocked_ips: blockedIps
+        });
     };
+
+    if (isLoading) {
+        return (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    if (!settings) {
+        return <Typography color="error">Failed to load settings</Typography>;
+    }
 
     return (
         <Box sx={{ width: '100%' }}>
@@ -117,7 +159,7 @@ export default function Policy() {
                     </Card>
                 </Grid>
 
-                {/* 2. Geo Whitelisting (Allowed Countries) */}
+                {/* 2. Geo Whitelisting */}
                 <Grid item xs={12} md={6}>
                     <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
                         <CardContent>
@@ -146,7 +188,7 @@ export default function Policy() {
                     </Card>
                 </Grid>
 
-                {/* 3. Custom IP Blocking (Validated) */}
+                {/* 3. Custom IP Blocking */}
                 <Grid item xs={12} md={6}>
                     <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
                         <CardContent>
@@ -215,9 +257,10 @@ export default function Policy() {
                         variant="contained"
                         size="large"
                         onClick={handleApply}
+                        disabled={updateMutation.isPending}
                         sx={{ bgcolor: '#f50057', color: '#fff', fontWeight: 'bold', py: 2, fontSize: '1.2rem', '&:hover': { bgcolor: '#c51162' } }}
                     >
-                        APPLY ALL FIREWALL POLICIES
+                        {updateMutation.isPending ? 'APPLYING...' : 'APPLY ALL FIREWALL POLICIES'}
                     </Button>
                 </Grid>
             </Grid>

@@ -44,14 +44,21 @@ export const ServicePipe = ({ activeCount = 0, totalCount = 0, passedCount = 0 }
             ctx.moveTo(0, 96); ctx.lineTo(canvas.width, 96);
             ctx.stroke();
 
-            // 2. Spawn Particles based on simulated density
-            if (Math.random() < 0.3) {
-                particlesRef.current.push({
-                    x: 0,
-                    y: 24 + Math.random() * 72,
-                    speed: 2 + Math.random() * 4,
-                    color: Math.random() > 0.9 ? '#f50057' : '#00e5ff' // 10% blocked (red), 90% allowed (cyan)
-                });
+            // 2. Spawn Particles ONLY if there is traffic
+            if (totalCount > 0) {
+                // Scale spawn rate based on traffic volume (max 0.3 probability for high traffic)
+                const spawnRate = Math.min(0.3, totalCount / 1000);
+                if (Math.random() < spawnRate) {
+                    // Calculate blocked ratio
+                    const blockedRatio = totalCount > 0 ? 1 - (passedCount / totalCount) : 0.1;
+
+                    particlesRef.current.push({
+                        x: 0,
+                        y: 24 + Math.random() * 72,
+                        speed: 2 + Math.random() * 4,
+                        color: Math.random() < blockedRatio ? '#f50057' : '#00e5ff'
+                    });
+                }
             }
 
             // 3. Move & Draw Particles
@@ -74,7 +81,7 @@ export const ServicePipe = ({ activeCount = 0, totalCount = 0, passedCount = 0 }
             window.removeEventListener('resize', resize);
             cancelAnimationFrame(animationFrameId);
         };
-    }, []);
+    }, [totalCount, passedCount]); // Re-run when traffic data changes
 
     return (
         <Box sx={{ position: 'relative', height: 120, bgcolor: '#0a0a0a', borderRadius: 2, overflow: 'hidden', border: '1px solid #333', display: 'flex', alignItems: 'center' }}>
