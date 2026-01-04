@@ -18,15 +18,27 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 2. Check Files
+# 2. Check Files & Unpack if needed
 if [ ! -f "kg-proxy-backend" ]; then
-    echo -e "${RED}Error: 'kg-proxy-backend' binary not found in current directory.${NC}"
-    echo "Please build the backend first and place it here."
+    if [ -f "release.tar.gz" ]; then
+        echo -e "${GREEN}[*] Found release package. Unpacking...${NC}"
+        # Unpack to current directory
+        tar -xzf release.tar.gz
+    else
+        echo -e "${RED}Error: 'kg-proxy-backend' and 'release.tar.gz' not found.${NC}"
+        echo "Please place the installer next to the release package."
+        exit 1
+    fi
+fi
+
+# Verify again after unpacking
+if [ ! -f "kg-proxy-backend" ]; then
+    echo -e "${RED}Error: 'kg-proxy-backend' binary not found after unpacking.${NC}"
     exit 1
 fi
 
-if [ ! -d "frontend/dist" ]; then
-    echo -e "${RED}Error: 'frontend/dist' directory not found in current directory.${NC}"
+if [ ! -d "frontend" ]; then
+    echo -e "${RED}Error: 'frontend' directory not found in current directory.${NC}"
     echo "Please build the frontend first and place it inside 'frontend'."
     exit 1
 fi
@@ -61,7 +73,7 @@ mkdir -p $DATA_DIR
 
 # Copy main binaries and assets
 cp kg-proxy-backend $INSTALL_DIR/
-cp -r frontend/dist/* $INSTALL_DIR/frontend/
+cp -r frontend/* $INSTALL_DIR/frontend/
 
 # Copy eBPF objects if they exist
 if [ -d "backend/ebpf" ]; then
