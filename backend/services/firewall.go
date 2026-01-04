@@ -206,9 +206,12 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// 1-5. Block Fragments
 		sb.WriteString("-A PREROUTING -f -j DROP\n")
 
-		// 1-5a. Block UDP Reflection Attacks (Source ports that shouldn't be clients)
-		// Normal game clients do NOT use these ports as source ports
-		sb.WriteString("-A PREROUTING -p udp -m multiport --sports 53,123,1900,11211 -j DROP\n")
+		// 1-5a. Block UDP Reflection Attacks - MOVED/REMOVED
+		// ERROR: This blocked DNS responses (Source Port 53) because the server acts as a client.
+		// To fix: We only allow these if state is ESTABLISHED (handled by conntrack usually),
+		// but since this is Mangle/PreRouting, it hits before standard Input allow.
+		// Safest approach for now: Remove blind blocking of sport 53/123.
+		sb.WriteString("-A PREROUTING -p udp -m multiport --sports 1900,11211 -j DROP\n")
 
 		// 1-5b. Block Bogon IPs (Spoofed IPs from local/reserved ranges) on WAN interface
 		sb.WriteString("-A PREROUTING -i eth0 -s 127.0.0.0/8 -j DROP\n")
