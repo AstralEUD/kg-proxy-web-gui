@@ -26,6 +26,22 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Install eBPF Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r)
+
+      - name: Generate eBPF Go Bindings
+        run: |
+          cd backend/services
+          go generate ./...
+          cd ../..
+
+      - name: Build eBPF Program
+        run: |
+          chmod +x build-ebpf.sh
+          ./build-ebpf.sh
+
       - name: Build Backend (Linux)
         run: |
           cd backend
@@ -41,74 +57,16 @@ jobs:
 
       - name: Package Release
         run: |
-          tar -czf release.tar.gz kg-proxy-backend frontend/dist
+          mkdir -p release-package
+          cp kg-proxy-backend release-package/
+          cp -r frontend/dist release-package/frontend
+          cp -r backend/ebpf release-package/ebpf
+          cp build-ebpf.sh release-package/
+          tar -czf release.tar.gz -C release-package .
           
-          # Generate install.sh (sync with logic in package.ps1)
-          cat > install.sh <<'EOF'
-          #!/bin/bash
-          set -e
-          RED='\033[0;31m'
-          GREEN='\033[0;32m'
-          CYAN='\033[0;36m'
-          BOLD='\033[1m'
-          NC='\033[0m'
-
-          clear
-          echo -e "${CYAN}${BOLD}"
-          echo "  _  __  ____      ____                      "
-          echo " | |/ / / ___|    |  _ \ _ __ _____  ___   _ "
-          echo " | ' / | |  _ ____| |_) | '__/ _ \ \/ / | | |"
-          echo " | . \ | |_| |____|  __/| | | (_) >  <| |_| |"
-          echo " |_|\_\ \____|    |_|   |_|  \___/_/\_\\__, |"
-          echo "                                       |___/ "
-          echo -e "${NC}"
-
-          if [ "$EUID" -ne 0 ]; then
-            echo -e "${RED}❌ Error: Please run as root (sudo ./install.sh)${NC}"
-            exit 1
-          fi
-
-          echo -e "${CYAN}[1/4] Installing dependencies...${NC}"
-          apt-get update -qq && apt-get install -y -qq wireguard iptables ipset wireguard-tools curl >/dev/null 2>&1
-
-          echo -e "${CYAN}[2/4] Extracting files...${NC}"
-          systemctl stop kg-proxy 2>/dev/null || true
-          mkdir -p /opt/kg-proxy
-          tar -xzf release.tar.gz -C /opt/kg-proxy/
-          chmod +x /opt/kg-proxy/kg-proxy-backend
-
-          echo -e "${CYAN}[3/4] Setting up systemd...${NC}"
-          cat > /etc/systemd/system/kg-proxy.service <<SEOF
-          [Unit]
-          Description=KG-Proxy Web GUI Backend
-          After=network.target
-
-          [Service]
-          Type=simple
-          WorkingDirectory=/opt/kg-proxy
-          ExecStart=/opt/kg-proxy/kg-proxy-backend
-          Restart=always
-          RestartSec=5
-          User=root
-          Environment=GIN_MODE=release
-
-          [Install]
-          WantedBy=multi-user.target
-          SEOF
-
-          systemctl daemon-reload
-          systemctl enable kg-proxy >/dev/null 2>&1
-          systemctl start kg-proxy
-
-          echo -e "${CYAN}[4/4] Configuring firewall...${NC}"
-          iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
-          iptables -A INPUT -p udp --dport 51820 -j ACCEPT
-
-          echo -e "${GREEN}✔ Installation Complete!${NC}"
-          IP=$(hostname -I | awk '{print $1}')
-          echo "Dashboard: http://$IP:8080"
-          EOF
-          chmod +x install.sh
+          # Use the actual install.sh from the project root
+          cp install.sh release-package/
+          tar -czf release.tar.gz -C release-package .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

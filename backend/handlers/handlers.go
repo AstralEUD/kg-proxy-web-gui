@@ -3,6 +3,7 @@ package handlers
 import (
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
+
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
@@ -11,10 +12,11 @@ type Handler struct {
 	DB       *gorm.DB
 	WG       *services.WireGuardService
 	Firewall *services.FirewallService
+	EBPF     *services.EBPFService
 }
 
-func NewHandler(db *gorm.DB, wg *services.WireGuardService, fw *services.FirewallService) *Handler {
-	return &Handler{DB: db, WG: wg, Firewall: fw}
+func NewHandler(db *gorm.DB, wg *services.WireGuardService, fw *services.FirewallService, ebpf *services.EBPFService) *Handler {
+	return &Handler{DB: db, WG: wg, Firewall: fw, EBPF: ebpf}
 }
 
 // GetOrigins - List all origins

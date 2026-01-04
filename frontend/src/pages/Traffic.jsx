@@ -23,7 +23,7 @@ export default function Traffic() {
     const [backendStats, setBackendStats] = useState({ connections: 0, uptime: '-', mock_mode: true });
     const [loading, setLoading] = useState(true);
 
-    // Fetch real backend status
+    // Fetch real backend status and eBPF traffic data
     useEffect(() => {
         const fetchStats = async () => {
             try {
@@ -31,11 +31,16 @@ export default function Traffic() {
                 setBackendStats(res.data);
                 setLoading(false);
 
-                // On Linux (mock_mode=false), we'd ideally have a real traffic API
-                // For now, show empty state in live mode until real eBPF data is integrated
-                if (!res.data.mock_mode) {
-                    // Real mode - show actual data when available
-                    // This would be populated from a real traffic monitoring API
+                // Fetch eBPF traffic data
+                try {
+                    const trafficRes = await client.get('/traffic/data');
+                    if (trafficRes.data.enabled && trafficRes.data.data) {
+                        setData(trafficRes.data.data);
+                    } else {
+                        setData([]);
+                    }
+                } catch (trafficErr) {
+                    console.error("Failed to fetch traffic data:", trafficErr);
                     setData([]);
                 }
             } catch (err) {

@@ -76,6 +76,20 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		h.DB.Save(&settings)
 	}
 
+	// Enable/Disable eBPF based on settings
+	if h.EBPF != nil {
+		if settings.EBPFEnabled {
+			if err := h.EBPF.Enable(); err != nil {
+				system.Warn("Failed to enable eBPF: %v", err)
+			} else {
+				system.Info("eBPF XDP monitoring enabled")
+			}
+		} else {
+			h.EBPF.Disable()
+			system.Info("eBPF XDP monitoring disabled")
+		}
+	}
+
 	// Handle blocked IPs (clear and recreate)
 	h.DB.Where("is_auto = ?", false).Delete(&models.BanIP{})
 	for _, ip := range input.BlockedIPs {

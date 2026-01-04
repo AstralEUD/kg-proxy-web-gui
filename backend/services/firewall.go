@@ -2,75 +2,354 @@ package services
 
 import (
 	"fmt"
-	"strings"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
+	"strings"
+
 	"gorm.io/gorm"
 )
 
 type FirewallService struct {
-	DB       *gorm.DB
-	Executor system.CommandExecutor
+	DB           *gorm.DB
+	Executor     system.CommandExecutor
+	GeoIP        *GeoIPService
+	FloodProtect *FloodProtection
 }
 
-func NewFirewallService(db *gorm.DB, exec system.CommandExecutor) *FirewallService {
-	return &FirewallService{DB: db, Executor: exec}
+func NewFirewallService(db *gorm.DB, exec system.CommandExecutor, geoip *GeoIPService, flood *FloodProtection) *FirewallService {
+	return &FirewallService{
+		DB:           db,
+		Executor:     exec,
+		GeoIP:        geoip,
+		FloodProtect: flood,
+	}
 }
 
 func (s *FirewallService) ApplyRules() error {
-	// 1. Generate ipset.rules
-	ipsetRules, err := s.generateIPSetRules()
+	// Get security settings
+	var settings models.SecuritySettings
+	if err := s.DB.First(&settings, 1).Error; err != nil {
+		system.Warn("No security settings found, using defaults")
+		settings = models.SecuritySettings{
+			GlobalProtection:  true,
+			ProtectionLevel:   2,
+			GeoAllowCountries: "KR",
+			SYNCookies:        true,
+		}
+	}
+
+	// Update flood protection level
+	if s.FloodProtect != nil {
+		s.FloodProtect.SetLevel(settings.ProtectionLevel)
+	}
+
+	// 1. Apply Kernel Hardening (Sysctl)
+	if err := s.ApplyHardening(settings.ProtectionLevel); err != nil {
+		system.Warn("Failed to apply kernel hardening: %v", err)
+	}
+
+	// 2. Generate ipset.rules
+	ipsetRules, err := s.generateIPSetRules(&settings)
 	if err != nil {
 		return err
 	}
 
-	// 2. Generate iptables.rules.v4
-	iptablesRules, err := s.generateIPTablesRules()
+	// 3. Generate iptables.rules.v4
+	iptablesRules, err := s.generateIPTablesRules(&settings)
 	if err != nil {
 		return err
 	}
 
-	// 3. Apply via Executor
-	// Save to tmp files or pipe? For mock, we just execute "restore" commands.
-	
-	fmt.Println("Applying IPSet Rules:\n", ipsetRules)
-	if _, err := s.Executor.Execute("ipset", "restore", "<", "ipset.rules"); err != nil {
-		fmt.Println("Error applying ipset (expected on Windows):", err)
+	// 4. Apply via Executor (Linux only)
+	system.Info("Applying firewall rules...")
+
+	// Save rules to files (mock path for Windows, real logic would write to file)
+	if err := s.saveRulesToFile("/tmp/ipset.rules", ipsetRules); err != nil {
+		system.Warn("Failed to save ipset rules: %v", err)
 	}
 
-	fmt.Println("Applying IPTables Rules:\n", iptablesRules)
-	if _, err := s.Executor.Execute("iptables-restore", "iptables.rules.v4"); err != nil {
-		fmt.Println("Error applying iptables (expected on Windows):", err)
+	if err := s.saveRulesToFile("/tmp/iptables.rules.v4", iptablesRules); err != nil {
+		system.Warn("Failed to save iptables rules: %v", err)
+	}
+
+	// Apply ipset
+	if _, err := s.Executor.Execute("ipset", "restore", "-f", "/tmp/ipset.rules"); err != nil {
+		system.Warn("Error applying ipset (may not be on Linux): %v", err)
+	} else {
+		system.Info("IPSet rules applied successfully")
+	}
+
+	// Apply iptables
+	if _, err := s.Executor.Execute("iptables-restore", "/tmp/iptables.rules.v4"); err != nil {
+		system.Warn("Error applying iptables (may not be on Linux): %v", err)
+	} else {
+		system.Info("IPTables rules applied successfully")
+	}
+
+	// Enable SYN cookies if requested (backup check)
+	if settings.SYNCookies && s.FloodProtect != nil {
+		s.FloodProtect.EnableSYNCookies()
+		s.FloodProtect.SetConntrackLimits()
 	}
 
 	return nil
 }
 
-func (s *FirewallService) generateIPSetRules() (string, error) {
+func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) (string, error) {
 	var sb strings.Builder
-	sb.WriteString("create geo_kr hash:net family inet -exist\n")
+
+	// Create ipsets
+	sb.WriteString("create geo_allowed hash:net family inet hashsize 4096 maxelem 1000000 -exist\n")
+	sb.WriteString("create vpn_proxy hash:net family inet hashsize 1024 maxelem 100000 -exist\n")
+	sb.WriteString("create tor_exits hash:ip family inet hashsize 1024 maxelem 10000 -exist\n")
 	sb.WriteString("create allow_foreign hash:ip family inet -exist\n")
 	sb.WriteString("create ban hash:ip family inet -exist\n")
+	sb.WriteString("create flood_blocked hash:ip family inet timeout 1800 -exist\n")
+
+	// Flush existing entries
+	sb.WriteString("flush geo_allowed\n")
+	sb.WriteString("flush vpn_proxy\n")
+	sb.WriteString("flush tor_exits\n")
 	sb.WriteString("flush allow_foreign\n")
 	sb.WriteString("flush ban\n")
+	sb.WriteString("flush flood_blocked\n")
 
+	// Add GeoIP allowed countries
+	if s.GeoIP != nil {
+		allowedCountries := strings.Split(settings.GeoAllowCountries, ",")
+		for _, country := range allowedCountries {
+			country = strings.TrimSpace(country)
+			if country == "" {
+				continue
+			}
+
+			// Get IP ranges for this country
+			if ranges, ok := s.GeoIP.countryRanges[country]; ok {
+				for _, ipRange := range ranges {
+					sb.WriteString(fmt.Sprintf("add geo_allowed %s\n", ipRange.String()))
+				}
+			}
+		}
+	}
+
+	// Add VPN/Proxy ranges if blocking enabled
+	if settings.BlockVPN && s.GeoIP != nil {
+		for _, vpnRange := range s.GeoIP.vpnRanges {
+			sb.WriteString(fmt.Sprintf("add vpn_proxy %s\n", vpnRange.String()))
+		}
+	}
+
+	// Add TOR exit nodes if blocking enabled
+	if settings.BlockTOR && s.GeoIP != nil {
+		for _, torIP := range s.GeoIP.torExitNodes {
+			sb.WriteString(fmt.Sprintf("add tor_exits %s\n", torIP.String()))
+		}
+	}
+
+	// Add manually allowed foreign IPs
 	var allowed []models.AllowForeign
 	s.DB.Find(&allowed)
 	for _, a := range allowed {
 		sb.WriteString(fmt.Sprintf("add allow_foreign %s\n", a.IP))
 	}
 
+	// Add manually banned IPs
 	var banned []models.BanIP
 	s.DB.Find(&banned)
 	for _, b := range banned {
 		sb.WriteString(fmt.Sprintf("add ban %s\n", b.IP))
 	}
 
+	// Add flood-blocked IPs
+	if s.FloodProtect != nil {
+		blockedIPs := s.FloodProtect.GetBlockedIPs()
+		for _, ip := range blockedIPs {
+			sb.WriteString(fmt.Sprintf("add flood_blocked %s\n", ip))
+		}
+	}
+
 	return sb.String(), nil
 }
 
-func (s *FirewallService) generateIPTablesRules() (string, error) {
-	// This would build the comprehensive iptables file content
-	// referencing the services from DB for DNAT rules.
-	return "*filter\n...\nCOMMIT\n", nil
+func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySettings) (string, error) {
+	var sb strings.Builder
+
+	// ==========================================
+	// 1. Mangle Table (Advanced Packet Filter)
+	// ==========================================
+	sb.WriteString("*mangle\n")
+	sb.WriteString(":PREROUTING ACCEPT [0:0]\n")
+	sb.WriteString(":INPUT ACCEPT [0:0]\n")
+	sb.WriteString(":FORWARD ACCEPT [0:0]\n")
+	sb.WriteString(":OUTPUT ACCEPT [0:0]\n")
+	sb.WriteString(":POSTROUTING ACCEPT [0:0]\n")
+	sb.WriteString(":DDOS_PRE - [0:0]\n")
+	sb.WriteString(":GEO_GUARD - [0:0]\n")
+
+	if settings.GlobalProtection {
+		// 1-1. Early Drop: Invalid Packets
+		sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
+
+		// 1-2. TCP Flag Validation (Block abnormal flags)
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,RST SYN,RST -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,RST FIN,RST -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags ALL NONE -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,PSH,URG FIN,PSH,URG -j DROP\n")
+
+		// 1-3. Block New non-SYN packets
+		sb.WriteString("-A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP\n")
+
+		// 1-4. Block Abnormal MSS
+		sb.WriteString("-A PREROUTING -p tcp -m conntrack --ctstate NEW -m tcpmss ! --mss 536:65535 -j DROP\n")
+
+		// 1-5. Block Fragments
+		sb.WriteString("-A PREROUTING -f -j DROP\n")
+
+		// 1-5a. Block UDP Reflection Attacks (Source ports that shouldn't be clients)
+		// Normal game clients do NOT use these ports as source ports
+		sb.WriteString("-A PREROUTING -p udp -m multiport --sports 53,123,1900,11211 -j DROP\n")
+
+		// 1-5b. Block Bogon IPs (Spoofed IPs from local/reserved ranges) on WAN interface
+		sb.WriteString("-A PREROUTING -i eth0 -s 127.0.0.0/8 -j DROP\n")
+		sb.WriteString("-A PREROUTING -i eth0 -s 169.254.0.0/16 -j DROP\n")
+		sb.WriteString("-A PREROUTING -i eth0 -s 224.0.0.0/4 -j DROP\n")
+		// Extended Bogon (Private ranges that shouldn't appear on public internet/eth0)
+		sb.WriteString("-A PREROUTING -i eth0 -s 192.168.0.0/16 -j DROP\n")
+		sb.WriteString("-A PREROUTING -i eth0 -s 172.16.0.0/12 -j DROP\n")
+
+		// 1-5g. Block Database Ports (No reason for external access)
+		sb.WriteString("-A PREROUTING -p tcp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
+		sb.WriteString("-A PREROUTING -p udp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
+
+		// 1-5c. Limit ICMP (Ping) to prevent flood
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m limit --limit 2/second -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
+
+		// 1-5d. Block empty UDP packets (Length check)
+		// IP Header (20) + UDP Header (8) = 28 bytes. Anything <= 28 means no payload.
+		// Game packets always have payload.
+		sb.WriteString("-A PREROUTING -p udp -m length --length 0:28 -j DROP\n")
+
+		// 1-5e. TCP RST Flood Protection
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -j DROP\n")
+
+		// 1-5f. Block SYN-ACK Flood (Packets with SYN+ACK but no established connection)
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
+	}
+
+	// 1-6. Apply GEO_GUARD logic (Drop if not allowed)
+	// We removed strict hashlimit/rate-limiting rules here to avoid blocking legitimate game traffic spikes.
+	// Game traffic patterns vary wildly (e.g. initial connection burst, large map download),
+	// so generic rate limiting at kernel level is risky.
+	// We rely on:
+	// 1. Vultr's upstream DDoS protection (L3/L4)
+	// 2. Protocol validation (Invalid packets, TCP flags) above
+	// 3. GeoIP & Blacklist filtering below
+	// 4. eBPF/Application level monitoring (Traffic Analysis)
+
+	sb.WriteString("-A PREROUTING -j GEO_GUARD\n")
+
+	sb.WriteString("-A GEO_GUARD -m set --match-set ban src -j DROP\n")
+	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
+	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")
+	// Drop everything else that didn't match ALLOW sets
+	sb.WriteString("-A GEO_GUARD -j DROP\n")
+
+	sb.WriteString("COMMIT\n")
+
+	// ==========================================
+	// 2. NAT Table (Port Forwarding)
+	// ==========================================
+	sb.WriteString("*nat\n")
+	sb.WriteString(":PREROUTING ACCEPT [0:0]\n")
+	sb.WriteString(":INPUT ACCEPT [0:0]\n")
+	sb.WriteString(":OUTPUT ACCEPT [0:0]\n")
+	sb.WriteString(":POSTROUTING ACCEPT [0:0]\n")
+
+	// Get services from DB for DNAT rules
+	var services []models.Service
+	s.DB.Preload("Origin").Find(&services)
+
+	for _, svc := range services {
+		if svc.Origin.WgIP == "" {
+			continue
+		}
+
+		// DNAT rules for game traffic
+		// Pre-routing DNAT happens here.
+		// Note: Traffic has already passed Mangle PREROUTING checks.
+		if svc.PublicGamePort > 0 {
+			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
+				svc.PublicGamePort, svc.Origin.WgIP, svc.PublicGamePort))
+		}
+		if svc.PublicBrowserPort > 0 {
+			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
+				svc.PublicBrowserPort, svc.Origin.WgIP, svc.PublicBrowserPort))
+		}
+		if svc.PublicA2SPort > 0 {
+			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
+				svc.PublicA2SPort, svc.Origin.WgIP, svc.PublicA2SPort))
+		}
+
+		// Arma 3 TCP/UDP variations
+		// Assuming Service model might not perfectly map yet, adding defaults if in range
+		if svc.PublicGamePort >= 2302 && svc.PublicGamePort <= 2356 {
+			// Add TCP for Arma 3
+			sb.WriteString(fmt.Sprintf("-A PREROUTING -p tcp --dport %d -j DNAT --to-destination %s:%d\n",
+				svc.PublicGamePort, svc.Origin.WgIP, svc.PublicGamePort))
+		}
+	}
+
+	// Masquerade for WireGuard outbound
+	sb.WriteString("-A POSTROUTING -s 10.200.0.0/24 -o eth0 -j MASQUERADE\n")
+	sb.WriteString("COMMIT\n")
+
+	// ==========================================
+	// 3. Filter Table (Host Protection)
+	// ==========================================
+	sb.WriteString("*filter\n")
+	sb.WriteString(":INPUT DROP [0:0]\n")
+	sb.WriteString(":FORWARD DROP [0:0]\n")
+	sb.WriteString(":OUTPUT ACCEPT [0:0]\n")
+
+	// Allow loopback
+	sb.WriteString("-A INPUT -i lo -j ACCEPT\n")
+	sb.WriteString("-A OUTPUT -o lo -j ACCEPT\n")
+
+	// Allow established connections
+	sb.WriteString("-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
+
+	// 1. SSH Brute-force Protection (Max 3 attempts per 60s)
+	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set\n")
+	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 4 -j DROP\n")
+	sb.WriteString("-A INPUT -p tcp --dport 22 -j ACCEPT\n")
+
+	// 2. Global TCP Connection Limit per IP (Max 50)
+	sb.WriteString("-A INPUT -p tcp -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP\n")
+
+	// Allow WireGuard (port 51820)
+	sb.WriteString("-A INPUT -p udp --dport 51820 -j ACCEPT\n")
+
+	// Allow HTTP/HTTPS for Web GUI
+	sb.WriteString("-A INPUT -p tcp --dport 80 -j ACCEPT\n")
+	sb.WriteString("-A INPUT -p tcp --dport 443 -j ACCEPT\n")
+	sb.WriteString("-A INPUT -p tcp --dport 8080 -j ACCEPT\n")
+
+	// Forwarding rules (Critical for NAT)
+	// Allow forwarded traffic that passed Mangle checks
+	sb.WriteString("-A FORWARD -i eth0 -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	sb.WriteString("-A FORWARD -i wg0 -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
+
+	sb.WriteString("COMMIT\n")
+
+	return sb.String(), nil
+}
+
+func (s *FirewallService) saveRulesToFile(path, content string) error {
+	// In production, write to file using os.WriteFile
+	// s.Executor.Execute("sh", "-c", fmt.Sprintf("cat <<EOF > %s\n%s\nEOF", path, content))
+	system.Info("[Simulated] Writing rules to %s", path)
+	return nil
 }

@@ -1,10 +1,16 @@
 package services
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
+	"os/exec"
+	"runtime"
 	"strings"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 type WireGuardService struct {
@@ -18,42 +24,91 @@ func NewWireGuardService(exec system.CommandExecutor, cfg *models.SystemConfig) 
 
 // GenerateKeys returns privateKey, publicKey, error
 func (s *WireGuardService) GenerateKeys() (string, string, error) {
-	// In a real scenario, use 'wg genkey' and 'wg pubkey'
-	// For Windows mock, the executor handles it.
+	// On Linux with WireGuard installed, use wg commands
+	// On Windows or when wg is not available, use Go crypto
 
-	privKey, err := s.Executor.Execute("wg", "genkey")
+	if runtime.GOOS == "linux" {
+		// Try using wg command
+		privKey, err := s.generateKeyWithWG()
+		if err == nil {
+			return privKey, s.derivePublicKey(privKey)
+		}
+		// Fall back to Go implementation if wg command fails
+	}
+
+	// Pure Go implementation (works everywhere)
+	return s.generateKeyWithGo()
+}
+
+// generateKeyWithWG uses wg command line tools
+func (s *WireGuardService) generateKeyWithWG() (string, error) {
+	cmd := exec.Command("wg", "genkey")
+	output, err := cmd.Output()
 	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// derivePublicKey derives public key from private key
+func (s *WireGuardService) derivePublicKey(privKey string) (string, error) {
+	if runtime.GOOS == "linux" {
+		// Try using wg pubkey command
+		cmd := exec.Command("wg", "pubkey")
+		cmd.Stdin = strings.NewReader(privKey)
+		output, err := cmd.Output()
+		if err == nil {
+			return strings.TrimSpace(string(output)), nil
+		}
+	}
+
+	// Fall back to Go implementation
+	privKeyBytes, err := base64.StdEncoding.DecodeString(privKey)
+	if err != nil {
+		return "", err
+	}
+
+	if len(privKeyBytes) != 32 {
+		return "", fmt.Errorf("invalid private key length")
+	}
+
+	var privKeyArray [32]byte
+	copy(privKeyArray[:], privKeyBytes)
+
+	var pubKeyArray [32]byte
+	curve25519.ScalarBaseMult(&pubKeyArray, &privKeyArray)
+
+	return base64.StdEncoding.EncodeToString(pubKeyArray[:]), nil
+}
+
+// generateKeyWithGo generates WireGuard keys using pure Go crypto
+func (s *WireGuardService) generateKeyWithGo() (string, string, error) {
+	// Generate 32 random bytes for private key
+	var privKey [32]byte
+	if _, err := rand.Read(privKey[:]); err != nil {
 		return "", "", err
 	}
-	privKey = strings.TrimSpace(privKey)
 
-	// In real shell: echo privKey | wg pubkey
-	// Here we simulate or use command input if needed, but for simplicity
-	// let's assume the mock or a separate call handles it.
-	// For real implementation refactoring might be needed to pipe input.
-	// But let's assume we can just get a pubkey for now or generate it in Go for real safety.
+	// Clamp the private key (WireGuard requirement)
+	privKey[0] &= 248
+	privKey[31] &= 127
+	privKey[31] |= 64
 
-	// actually better to use crypto/rand in Go for production, but following guides using wg tools.
-	// For now, let's just assume we call a second command.
-	pubKey, err := s.Executor.Execute("wg", "pubkey", privKey) // This signature is hypothetical for the tool
-	if err != nil {
-		return "", "", err
-	}
-	pubKey = strings.TrimSpace(pubKey)
+	// Derive public key using Curve25519
+	var pubKey [32]byte
+	curve25519.ScalarBaseMult(&pubKey, &privKey)
 
-	return privKey, pubKey, nil
+	privKeyStr := base64.StdEncoding.EncodeToString(privKey[:])
+	pubKeyStr := base64.StdEncoding.EncodeToString(pubKey[:])
+
+	return privKeyStr, pubKeyStr, nil
 }
 
 // GenerateAllowedIPs excludes specific subnets from 0.0.0.0/0
-// This is a simplified Go implementation of the Python script in the guide.
 func (s *WireGuardService) GenerateAllowedIPs(vpsIP, originLan string) (string, error) {
-	// Logic to calc subnets.
-	// This is complex to implement fully in one go without IP library heavy usage.
-	// For prototype, we might return a fixed string or simplified list.
-
-	// Exclude: VPS IP, Origin LAN, 169.254.0.0/16, 127.0.0.0/8
-	// Implementation placeholder
-	return "0.0.0.0/5, 8.0.0.0/7, 11.0.0.0/8, ... (calculated subnets)", nil
+	// For now, return full routing
+	// In production, this should exclude VPS IP and Origin LAN
+	return "0.0.0.0/0, ::/0", nil
 }
 
 func (s *WireGuardService) generateClientConfig(peer *models.WireGuardPeer, vpsIP string) string {
@@ -63,9 +118,9 @@ PrivateKey = %s
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = %s
+PublicKey = <VPS_PUB_KEY>
 Endpoint = %s:51820
 AllowedIPs = %s
 PersistentKeepalive = 25
-`, peer.OriginID+2, peer.PrivateKey, "<VPS_PUB_KEY>", vpsIP, "0.0.0.0/0, ::/0 (placeholder)")
+`, peer.OriginID+2, peer.PrivateKey, vpsIP, "0.0.0.0/0, ::/0")
 }

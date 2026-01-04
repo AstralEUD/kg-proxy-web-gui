@@ -49,11 +49,32 @@ func main() {
 	executor := system.NewExecutor()
 	sysConfig := &models.SystemConfig{}
 
+	// Initialize GeoIP service
+	geoipService := services.NewGeoIPService()
+	system.Info("GeoIP service initialized")
+
+	// Initialize Flood Protection
+	var settings models.SecuritySettings
+	protectionLevel := 2 // Default to high
+	if err := db.First(&settings, 1).Error; err == nil {
+		protectionLevel = settings.ProtectionLevel
+	}
+	floodProtect := services.NewFloodProtection(protectionLevel)
+	system.Info("Flood protection initialized (level: %d)", protectionLevel)
+
 	wgService := services.NewWireGuardService(executor, sysConfig)
-	fwService := services.NewFirewallService(db, executor)
+	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
+	ebpfService := services.NewEBPFService()
+	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
+
+	// Check if eBPF should be enabled from settings
+	if err := db.First(&settings, 1).Error; err == nil && settings.EBPFEnabled {
+		ebpfService.Enable()
+		system.Info("eBPF XDP monitoring enabled")
+	}
 
 	// 3. Setup Handlers
-	h := handlers.NewHandler(db, wgService, fwService)
+	h := handlers.NewHandler(db, wgService, fwService, ebpfService)
 
 	// 4. Setup Fiber
 	app := fiber.New(fiber.Config{
@@ -109,6 +130,9 @@ func main() {
 	// Security Settings
 	protected.Get("/security/settings", h.GetSecuritySettings)
 	protected.Put("/security/settings", h.UpdateSecuritySettings)
+
+	// Traffic Data (eBPF)
+	protected.Get("/traffic/data", h.GetTrafficData)
 
 	// 5. Serve Static Files (Frontend)
 	frontendPath := "./frontend/dist"

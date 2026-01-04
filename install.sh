@@ -32,60 +32,130 @@ if [ ! -d "frontend/dist" ]; then
 fi
 
 # 3. Install Dependencies
-echo -e "${GREEN}[1/5] Installing system dependencies...${NC}"
+echo -e "${GREEN}[1/7] Installing system dependencies...${NC}"
 apt-get update -qq
-apt-get install -y -qq wireguard iptables ipset wireguard-tools
+# Ensure GCC and Make make avail for eBPF 
+apt-get install -y -qq wireguard iptables ipset wireguard-tools clang llvm libbpf-dev linux-headers-$(uname -r) make gcc gcc-multilib
 
-# 4. Setup Directories & Copy Files
-echo -e "${GREEN}[2/5] Deploying files to /opt/kg-proxy...${NC}"
-mkdir -p /opt/kg-proxy/frontend
-cp kg-proxy-backend /opt/kg-proxy/
-cp -r frontend/dist/* /opt/kg-proxy/frontend/
+# 4. Build eBPF
+echo -e "${GREEN}[2/7] Building eBPF XDP filter...${NC}"
+if [ -f "backend/ebpf/xdp_filter.c" ]; then
+    if [ -f "build-ebpf.sh" ]; then
+        chmod +x build-ebpf.sh
+        ./build-ebpf.sh || echo -e "${RED}Warning: eBPF build failed. Simulation mode will be used.${NC}"
+    else
+        echo "build-ebpf.sh not found, skipping build."
+    fi
+else
+    echo "eBPF source not found, skipping build."
+fi
 
-chmod +x /opt/kg-proxy/kg-proxy-backend
+# 5. Setup Directories & Copy Files
+echo -e "${GREEN}[3/7] Deploying files...${NC}"
+INSTALL_DIR="/opt/kg-proxy"
+DATA_DIR="/var/lib/kg-proxy"
 
-# 5. Create Systemd Service
-echo -e "${GREEN}[3/5] Configuring systemd service...${NC}"
+mkdir -p $INSTALL_DIR/frontend
+mkdir -p $INSTALL_DIR/ebpf
+mkdir -p $DATA_DIR
+
+# Copy main binaries and assets
+cp kg-proxy-backend $INSTALL_DIR/
+cp -r frontend/dist/* $INSTALL_DIR/frontend/
+
+# Copy eBPF objects if they exist
+if [ -d "backend/ebpf" ]; then
+    cp -r backend/ebpf/* $INSTALL_DIR/ebpf/ 2>/dev/null || true
+fi
+
+chmod +x $INSTALL_DIR/kg-proxy-backend
+
+# 6. Configure System Hardening (Sysctl)
+echo -e "${GREEN}[4/7] Applying system hardening defaults...${NC}"
+# We append to a custom sysctl file to persist across reboots
+cat > /etc/sysctl.d/99-kg-proxy-hardening.conf <<EOF
+# KG-Proxy Base Hardening
+net.ipv4.ip_forward = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.core.bpf_jit_enable = 1
+EOF
+sysctl --system > /dev/null 2>&1 || true
+
+# 7. Create Systemd Service
+echo -e "${GREEN}[5/7] Configuring systemd service...${NC}"
 cat > /etc/systemd/system/kg-proxy.service <<EOF
 [Unit]
 Description=KG-Proxy Web GUI Backend
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/kg-proxy
-ExecStart=/opt/kg-proxy/kg-proxy-backend
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/kg-proxy-backend
 Restart=always
 RestartSec=5
 User=root
 Environment=GIN_MODE=release
+Environment=KG_DATA_DIR=$DATA_DIR
+LimitNOFILE=65535
+StartLimitInterval=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 6. Enable Service
-echo -e "${GREEN}[4/5] Enabling and starting service...${NC}"
+# 8. Install Management Script (kgctl)
+echo -e "${GREEN}[6/7] Installing management tool (kgctl)...${NC}"
+cat > /usr/local/bin/kgctl <<'EOF'
+#!/bin/bash
+# KG-Proxy Control Script
+
+CMD=$1
+SERVICE="kg-proxy"
+
+case "$CMD" in
+    start)
+        systemctl start $SERVICE
+        echo "Started $SERVICE"
+        ;;
+    stop)
+        systemctl stop $SERVICE
+        echo "Stopped $SERVICE"
+        ;;
+    restart)
+        systemctl restart $SERVICE
+        echo "Restarted $SERVICE"
+        ;;
+    status)
+        systemctl status $SERVICE
+        ;;
+    logs)
+        journalctl -u $SERVICE -f
+        ;;
+    update)
+        echo "Pulling latest code and reinstalling..."
+        git pull
+        ./install.sh
+        ;;
+    *)
+        echo "Usage: kgctl {start|stop|restart|status|logs|update}"
+        exit 1
+        ;;
+esac
+EOF
+chmod +x /usr/local/bin/kgctl
+
+# 9. Enable & Start
+echo -e "${GREEN}[7/7] Enabling and starting service...${NC}"
 systemctl daemon-reload
 systemctl enable kg-proxy
 systemctl stop kg-proxy 2>/dev/null || true
 systemctl start kg-proxy
 
-# 7. Open Firewall Ports
-echo -e "${GREEN}[5/5] Configuring firewall (iptables)...${NC}"
-# Allow Web GUI
-iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
-# Allow WireGuard
-iptables -A INPUT -p udp --dport 51820 -j ACCEPT
-
-# Attempt to save if persistent package is installed, otherwise warn
-if dpkg -l | grep -q iptables-persistent; then
-    netfilter-persistent save
-else
-    echo "Note: 'iptables-persistent' not found. Rules might reset on reboot."
-    echo "To save permanently: apt install iptables-persistent && netfilter-persistent save"
-fi
-
 echo -e "${GREEN}== Installation Complete! ==${NC}"
-echo "Dashboard is running at: http://$(hostname -I | awk '{print $1}'):8080"
-echo "Check status: systemctl status kg-proxy"
+echo -e "Dashboard: http://$(hostname -I | awk '{print $1}'):8080"
+echo -e "Manage app using: ${GREEN}kgctl <command>${NC}"
+echo -e "Example: ${GREEN}kgctl logs${NC} to see realtime logs"
