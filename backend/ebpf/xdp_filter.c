@@ -152,6 +152,15 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
             __sync_fetch_and_add(&stats->bytes, pkt_size);
             stats->last_seen = bpf_ktime_get_ns();
+        } else {
+            // Create new entry for unknown IP
+            struct packet_stats new_stats = {
+                .packets = 1,
+                .bytes = (void *)(long)ctx->data_end - (void *)(long)ctx->data,
+                .last_seen = bpf_ktime_get_ns(),
+                .blocked = 0,
+            };
+            bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
         }
         return XDP_PASS; // Pass to iptables
     }

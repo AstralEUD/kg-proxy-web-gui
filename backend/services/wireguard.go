@@ -127,3 +127,20 @@ AllowedIPs = %s
 PersistentKeepalive = 25
 `, peer.OriginID+2, peer.PrivateKey, vpsIP, "0.0.0.0/0, ::/0")
 }
+
+// GetServerPublicKey returns the public key of the WireGuard server interface (wg0)
+func (s *WireGuardService) GetServerPublicKey() string {
+	if runtime.GOOS != "linux" {
+		// Mock key for dev
+		return "SERVER_PUB_KEY_MOCK_123456="
+	}
+
+	// Try wg show
+	out, err := exec.Command("wg", "show", "wg0", "public-key").Output()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+
+	// If failed (maybe interface down?), try reading config or return error
+	return "UNKNOWN_SERVER_KEY"
+}

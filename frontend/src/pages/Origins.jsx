@@ -18,16 +18,16 @@ const getNextOriginName = (origins) => {
     return `Origin-${String(max + 1).padStart(3, '0')}`;
 };
 
-const generateWgConfig = (origin, peerInfo) => {
+const generateWgConfig = (origin, peerInfo, serverInfo) => {
     return `[Interface]
 Address = ${origin?.wg_ip || '10.200.0.2'}/32
-PrivateKey = ${peerInfo?.private_key || '<GENERATED_PRIVATE_KEY>'}
+PrivateKey = ${peerInfo?.private_key || '<PRIVATE_KEY_HIDDEN>'}
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = <VPS_PUBLIC_KEY>
-Endpoint = <VPS_IP>:51820
-AllowedIPs = 0.0.0.0/0
+PublicKey = ${serverInfo?.wireguard_public_key || '<VPS_PUBLIC_KEY>'}
+Endpoint = ${serverInfo?.public_ip || '<VPS_IP>'}:${serverInfo?.wireguard_port || 51820}
+AllowedIPs = 10.200.0.0/24, 10.99.0.0/24
 PersistentKeepalive = 25`;
 };
 
@@ -37,6 +37,14 @@ export default function Origins() {
     const [createdOrigin, setCreatedOrigin] = useState(null);
     const [copied, setCopied] = useState(false);
     const queryClient = useQueryClient();
+
+    const { data: serverInfo } = useQuery({
+        queryKey: ['serverInfo'],
+        queryFn: async () => {
+            const res = await client.get('/server/info');
+            return res.data;
+        }
+    });
 
     const { data: origins, isLoading } = useQuery({
         queryKey: ['origins'],
@@ -71,26 +79,34 @@ export default function Origins() {
 
     const handleCreate = () => {
         const name = getNextOriginName(origins);
-        const nextIndex = (origins?.length || 0) + 2;
-        const wgIp = `10.200.0.${nextIndex}`;
+        // Find first available IP suffix
+        const usedSuffixes = origins?.map(o => parseInt(o.wg_ip.split('.')[3])) || [];
+        let nextSuffix = 2;
+        while (usedSuffixes.includes(nextSuffix)) {
+            nextSuffix++;
+        }
+        const wgIp = `10.200.0.${nextSuffix}`;
         createMutation.mutate({ name, wg_ip: wgIp });
     };
 
-    const handleDownload = () => {
-        if (!createdOrigin) return;
-        const config = generateWgConfig(createdOrigin.origin, createdOrigin.wg_config);
+    const handleDownload = (originData = null) => {
+        const target = originData || createdOrigin;
+        if (!target) return;
+
+        // Use hidden key if not available (list view)
+        const config = generateWgConfig(target.origin, target.wg_config || {}, serverInfo);
         const blob = new Blob([config], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${createdOrigin.origin?.name || 'origin'}.conf`;
+        a.download = `${target.origin?.name || 'origin'}.conf`;
         a.click();
         URL.revokeObjectURL(url);
     };
 
     const handleCopy = () => {
         if (!createdOrigin) return;
-        const config = generateWgConfig(createdOrigin.origin, createdOrigin.wg_config);
+        const config = generateWgConfig(createdOrigin.origin, createdOrigin.wg_config, serverInfo);
         navigator.clipboard.writeText(config);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -162,16 +178,7 @@ export default function Origins() {
                                     </Typography>
                                 </CardContent>
                                 <CardActions sx={{ borderTop: '1px solid #1a1a1a', px: 2, py: 1 }}>
-                                    <Tooltip title="QR Code">
-                                        <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
-                                            <QrCode2 fontSize="small" />
-                                        </IconButton>
-                                    </Tooltip>
-                                    <Tooltip title="Download">
-                                        <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
-                                            <Download fontSize="small" />
-                                        </IconButton>
-                                    </Tooltip>
+                                    {/* Note: In list view, we don't have the private key, so these are just placeholders or need different logic */}
                                     <Tooltip title="Delete">
                                         <IconButton
                                             size="small"
@@ -202,13 +209,13 @@ export default function Origins() {
                             <CloudQueue sx={{ fontSize: 60, color: '#00e5ff', mb: 2 }} />
                             <Typography variant="body1" gutterBottom>Ready to create a new Origin?</Typography>
                             <Typography variant="caption" color="textSecondary">
-                                Name and IP will be auto-assigned. WireGuard keys generated automatically.
+                                Name and IP ({serverInfo?.public_ip || 'Loading...'}) will be auto-assigned.
                             </Typography>
                             <Box sx={{ mt: 3 }}>
                                 <Button
                                     variant="contained"
                                     onClick={handleCreate}
-                                    disabled={createMutation.isPending}
+                                    disabled={createMutation.isPending || !serverInfo}
                                     sx={{ background: 'linear-gradient(45deg, #00e5ff, #00b8d4)', color: '#000', fontWeight: 'bold' }}
                                 >
                                     {createMutation.isPending ? 'Creating...' : 'Create Now'}
@@ -224,16 +231,16 @@ export default function Origins() {
                                 </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2, p: 2, bgcolor: '#fff', borderRadius: 1 }}>
-                                <QRCode value={generateWgConfig(createdOrigin?.origin, createdOrigin?.wg_config)} size={140} />
+                                <QRCode value={generateWgConfig(createdOrigin?.origin, createdOrigin?.wg_config, serverInfo)} size={140} />
                             </Box>
                             <Paper sx={{ p: 1.5, bgcolor: '#0a0a0a', fontFamily: 'monospace', fontSize: 10, mb: 2, maxHeight: 120, overflow: 'auto' }}>
-                                <pre style={{ margin: 0, color: '#0f0' }}>{generateWgConfig(createdOrigin?.origin, createdOrigin?.wg_config)}</pre>
+                                <pre style={{ margin: 0, color: '#0f0' }}>{generateWgConfig(createdOrigin?.origin, createdOrigin?.wg_config, serverInfo)}</pre>
                             </Paper>
                             <Box sx={{ display: 'flex', gap: 1 }}>
                                 <Button fullWidth variant="outlined" size="small" startIcon={<ContentCopy />} onClick={handleCopy}>
                                     {copied ? 'Copied!' : 'Copy'}
                                 </Button>
-                                <Button fullWidth variant="contained" size="small" startIcon={<Download />} onClick={handleDownload}>
+                                <Button fullWidth variant="contained" size="small" startIcon={<Download />} onClick={() => handleDownload()}>
                                     Download
                                 </Button>
                             </Box>

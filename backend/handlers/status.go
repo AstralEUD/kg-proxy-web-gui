@@ -118,30 +118,30 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 
 	// Calculate required ports based on services
 	var dbServices []struct {
-		GamePort    int
-		BrowserPort int
-		QueryPort   int
+		PublicGamePort    int
+		PublicBrowserPort int
+		PublicA2SPort     int
 	}
-	h.DB.Table("services").Select("game_port, browser_port, query_port").Find(&dbServices)
+	h.DB.Table("services").Select("public_game_port, public_browser_port, public_a2s_port").Find(&dbServices)
 
 	requiredPorts := []PortRequirement{
 		{Port: 51820, Protocol: "UDP", Service: "WireGuard", Description: "VPN Tunnel"},
 	}
 
 	for _, svc := range dbServices {
-		if svc.GamePort > 0 {
+		if svc.PublicGamePort > 0 {
 			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.GamePort, Protocol: "UDP", Service: "Game", Description: "Game Traffic",
+				Port: svc.PublicGamePort, Protocol: "UDP", Service: "Game", Description: "Game Traffic",
 			})
 		}
-		if svc.BrowserPort > 0 {
+		if svc.PublicBrowserPort > 0 {
 			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.BrowserPort, Protocol: "UDP", Service: "Browser", Description: "Server Browser",
+				Port: svc.PublicBrowserPort, Protocol: "UDP", Service: "Browser", Description: "Server Browser",
 			})
 		}
-		if svc.QueryPort > 0 {
+		if svc.PublicA2SPort > 0 {
 			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.QueryPort, Protocol: "UDP", Service: "Query", Description: "Steam Query",
+				Port: svc.PublicA2SPort, Protocol: "UDP", Service: "Query", Description: "Steam Query",
 			})
 		}
 	}
@@ -219,10 +219,12 @@ Chain OUTPUT (policy ACCEPT)`
 func (h *Handler) GetServerInfo(c *fiber.Ctx) error {
 	sysInfo := services.NewSysInfoService()
 	publicIP := sysInfo.GetPublicIP()
+	serverPubKey := h.WG.GetServerPublicKey()
 
 	return c.JSON(fiber.Map{
-		"public_ip":      publicIP,
-		"wireguard_port": 51820,
-		"wg_subnet":      "10.200.0.0/24",
+		"public_ip":            publicIP,
+		"wireguard_port":       51820,
+		"wireguard_public_key": serverPubKey,
+		"wg_subnet":            "10.200.0.0/24",
 	})
 }
