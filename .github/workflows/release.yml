@@ -45,7 +45,7 @@ jobs:
 
       - name: Build Backend (Linux)
         run: |
-          GOOS=linux GOARCH=amd64 go build -o kg-proxy-backend .
+          GOOS=linux GOARCH=amd64 go build -o kg-proxy-backend ./backend
 
       - name: Build Frontend
         run: |
