@@ -43,14 +43,18 @@ if [ ! -d "frontend" ]; then
     exit 1
 fi
 
-# 3. Install Dependencies
-echo -e "${GREEN}[1/7] Installing system dependencies...${NC}"
+# 3. Stop Service if running
+echo -e "${GREEN}[1/7] Stopping existing service...${NC}"
+systemctl stop kg-proxy 2>/dev/null || true
+
+# 4. Install Dependencies
+echo -e "${GREEN}[2/7] Installing system dependencies...${NC}"
 apt-get update -qq
 # Ensure GCC and Make make avail for eBPF 
 apt-get install -y -qq wireguard iptables ipset wireguard-tools clang llvm libbpf-dev linux-headers-$(uname -r) make gcc gcc-multilib
 
-# 4. Build eBPF
-echo -e "${GREEN}[2/7] Building eBPF XDP filter...${NC}"
+# 5. Build eBPF
+echo -e "${GREEN}[3/7] Building eBPF XDP filter...${NC}"
 if [ -f "backend/ebpf/xdp_filter.c" ]; then
     if [ -f "build-ebpf.sh" ]; then
         chmod +x build-ebpf.sh
@@ -59,11 +63,11 @@ if [ -f "backend/ebpf/xdp_filter.c" ]; then
         echo "build-ebpf.sh not found, skipping build."
     fi
 else
-    echo "eBPF source not found, skipping build."
+    echo "Note: eBPF source not found. Assuming pre-compiled or simulation mode."
 fi
 
-# 5. Setup Directories & Copy Files
-echo -e "${GREEN}[3/7] Deploying files...${NC}"
+# 6. Setup Directories & Copy Files
+echo -e "${GREEN}[4/7] Deploying files...${NC}"
 INSTALL_DIR="/opt/kg-proxy"
 DATA_DIR="/var/lib/kg-proxy"
 
