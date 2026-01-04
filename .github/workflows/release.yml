@@ -33,6 +33,7 @@ jobs:
 
       - name: Generate eBPF Go Bindings
         run: |
+          go install github.com/cilium/ebpf/cmd/bpf2go@latest
           cd backend/services
           go generate ./...
           cd ../..
