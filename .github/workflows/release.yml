@@ -19,7 +19,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23' # Newer Go for compatibility and toolchain stability
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,6 +34,7 @@ jobs:
       - name: Generate eBPF Go Bindings
         run: |
           go install github.com/cilium/ebpf/cmd/bpf2go@latest
+          export PATH=$PATH:$(go env GOPATH)/bin
           cd backend/services
           go generate ./...
           cd ../..

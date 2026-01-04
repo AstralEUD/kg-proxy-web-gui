@@ -13,7 +13,7 @@ import (
 	"github.com/cilium/ebpf/link"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" xdp ../ebpf/xdp_filter.c -- -I/usr/include/x86_64-linux-gnu
+//go:generate bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" xdp ../ebpf/xdp_filter.c -- -I/usr/include/x86_64-linux-gnu
 
 // TrafficEntry represents a single traffic record
 type TrafficEntry struct {
