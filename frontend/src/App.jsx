@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -11,12 +11,13 @@ import Policy from './pages/Policy';
 import Traffic from './pages/Traffic';
 import Users from './pages/Users';
 import Login from './pages/Login';
+import { isAuthenticated } from './api/client';
 
 const darkTheme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#00e5ff', // Cyan for Cyberpunk feel
+      main: '#00e5ff',
     },
     background: {
       default: '#0a0a0a',
@@ -30,6 +31,17 @@ const darkTheme = createTheme({
 
 const queryClient = new QueryClient();
 
+// Protected Route component
+function RequireAuth({ children }) {
+  const location = useLocation();
+
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -38,7 +50,14 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/" element={<Layout />}>
+            <Route
+              path="/"
+              element={
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              }
+            >
               <Route index element={<Dashboard />} />
               <Route path="origins" element={<Origins />} />
               <Route path="services" element={<Services />} />

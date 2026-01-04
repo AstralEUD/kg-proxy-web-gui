@@ -60,6 +60,11 @@ export default function Origins() {
         },
     });
 
+    const deleteMutation = useMutation({
+        mutationFn: (id) => client.delete(`/origins/${id}`),
+        onSuccess: () => queryClient.invalidateQueries(['origins']),
+    });
+
     const handleCreate = () => {
         const name = getNextOriginName(origins);
         const nextIndex = (origins?.length || 0) + 2;
@@ -117,50 +122,67 @@ export default function Origins() {
                 </Button>
             </Box>
 
-            <Grid container spacing={2}>
-                {origins?.map((origin) => (
-                    <Grid item xs={12} sm={6} lg={4} key={origin.id}>
-                        <Card sx={{
-                            bgcolor: '#111',
-                            borderRadius: 2,
-                            border: '1px solid #222',
-                            '&:hover': { borderColor: '#00e5ff40' }
-                        }}>
-                            <CardContent sx={{ pb: 1 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                    <CloudQueue sx={{ color: '#00e5ff', mr: 1, fontSize: 20 }} />
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>{origin.name}</Typography>
-                                    <Chip
-                                        label="Active"
-                                        size="small"
-                                        sx={{ ml: 'auto', bgcolor: '#00c85320', color: '#00c853', height: 20, fontSize: 10 }}
-                                    />
-                                </Box>
-                                <Typography variant="caption" color="textSecondary">
-                                    WireGuard IP: <code style={{ color: '#00e5ff' }}>{origin.wg_ip || 'N/A'}</code>
-                                </Typography>
-                            </CardContent>
-                            <CardActions sx={{ borderTop: '1px solid #1a1a1a', px: 2, py: 1 }}>
-                                <Tooltip title="QR Code">
-                                    <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
-                                        <QrCode2 fontSize="small" />
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title="Download">
-                                    <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
-                                        <Download fontSize="small" />
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title="Delete">
-                                    <IconButton size="small" sx={{ color: '#888', ml: 'auto', '&:hover': { color: '#f50057' } }}>
-                                        <Delete fontSize="small" />
-                                    </IconButton>
-                                </Tooltip>
-                            </CardActions>
-                        </Card>
-                    </Grid>
-                ))}
-            </Grid>
+            {origins?.length === 0 && !isLoading ? (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                    <CloudQueue sx={{ fontSize: 48, color: '#333', mb: 2 }} />
+                    <Typography variant="h6" color="textSecondary">No Origins Configured</Typography>
+                    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                        Create your first Origin server to start routing traffic.
+                    </Typography>
+                    <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setOpen(true)}>
+                        Create Origin
+                    </Button>
+                </Box>
+            ) : (
+                <Grid container spacing={2}>
+                    {origins?.map((origin) => (
+                        <Grid item xs={12} sm={6} lg={4} key={origin.id}>
+                            <Card sx={{
+                                bgcolor: '#111',
+                                borderRadius: 2,
+                                border: '1px solid #222',
+                                '&:hover': { borderColor: '#00e5ff40' }
+                            }}>
+                                <CardContent sx={{ pb: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                        <CloudQueue sx={{ color: '#00e5ff', mr: 1, fontSize: 20 }} />
+                                        <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>{origin.name}</Typography>
+                                        <Chip
+                                            label="Active"
+                                            size="small"
+                                            sx={{ ml: 'auto', bgcolor: '#00c85320', color: '#00c853', height: 20, fontSize: 10 }}
+                                        />
+                                    </Box>
+                                    <Typography variant="caption" color="textSecondary">
+                                        WireGuard IP: <code style={{ color: '#00e5ff' }}>{origin.wg_ip || 'N/A'}</code>
+                                    </Typography>
+                                </CardContent>
+                                <CardActions sx={{ borderTop: '1px solid #1a1a1a', px: 2, py: 1 }}>
+                                    <Tooltip title="QR Code">
+                                        <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
+                                            <QrCode2 fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Download">
+                                        <IconButton size="small" sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}>
+                                            <Download fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Delete">
+                                        <IconButton
+                                            size="small"
+                                            sx={{ color: '#888', ml: 'auto', '&:hover': { color: '#f50057' } }}
+                                            onClick={() => deleteMutation.mutate(origin.id)}
+                                        >
+                                            <Delete fontSize="small" />
+                                        </IconButton>
+                                    </Tooltip>
+                                </CardActions>
+                            </Card>
+                        </Grid>
+                    ))}
+                </Grid>
+            )}
 
             {/* Dialog */}
             <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>

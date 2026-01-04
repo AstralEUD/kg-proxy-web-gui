@@ -47,7 +47,7 @@ func main() {
 
 	// 2. Setup Services
 	executor := system.NewExecutor()
-	sysConfig := &models.SystemConfig{} // Load from file in real app
+	sysConfig := &models.SystemConfig{}
 
 	wgService := services.NewWireGuardService(executor, sysConfig)
 	fwService := services.NewFirewallService(db, executor)
@@ -67,33 +67,44 @@ func main() {
 		Output:     os.Stdout,
 	}))
 
-	app.Use(cors.New()) // Allow Frontend to access
+	app.Use(cors.New())
 
 	api := app.Group("/api")
 
-	// Auth
+	// ===== Public Routes (No Auth Required) =====
 	api.Post("/login", h.Login)
-	api.Put("/auth/password", h.ChangePassword) // Needs middleware in real app
+
+	// ===== Protected Routes (JWT Required) =====
+	protected := api.Group("", handlers.JWTAuthMiddleware())
+
+	// Auth
+	protected.Put("/auth/password", h.ChangePassword)
 
 	// Origins
-	api.Get("/origins", h.GetOrigins)
-	api.Post("/origins", h.CreateOrigin)
+	protected.Get("/origins", h.GetOrigins)
+	protected.Post("/origins", h.CreateOrigin)
+	protected.Delete("/origins/:id", h.DeleteOrigin)
 
 	// Firewall
-	api.Post("/firewall/apply", h.ApplyFirewall)
-	api.Get("/firewall/status", h.GetFirewallStatus)
+	protected.Post("/firewall/apply", h.ApplyFirewall)
+	protected.Get("/firewall/status", h.GetFirewallStatus)
 
 	// System Status
-	api.Get("/status", h.GetSystemStatus)
-	api.Get("/events", h.GetEvents)
+	protected.Get("/status", h.GetSystemStatus)
+	protected.Get("/events", h.GetEvents)
 
 	// WireGuard
-	api.Get("/wireguard/status", h.GetWireGuardStatus)
+	protected.Get("/wireguard/status", h.GetWireGuardStatus)
 
 	// User Management
-	api.Get("/users", h.GetUsers)
-	api.Post("/users", h.CreateUser)
-	api.Delete("/users/:id", h.DeleteUser)
+	protected.Get("/users", h.GetUsers)
+	protected.Post("/users", h.CreateUser)
+	protected.Delete("/users/:id", h.DeleteUser)
+
+	// Services
+	protected.Get("/services", h.GetServices)
+	protected.Post("/services", h.CreateService)
+	protected.Delete("/services/:id", h.DeleteService)
 
 	// 5. Serve Static Files (Frontend)
 	frontendPath := "./frontend/dist"

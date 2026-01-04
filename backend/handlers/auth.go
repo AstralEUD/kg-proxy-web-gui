@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"kg-proxy-web-gui/backend/models"
+	"kg-proxy-web-gui/backend/system"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -28,22 +30,15 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	var admin models.Admin
 	result := h.DB.Where("username = ?", req.Username).First(&admin)
 
-	// Admin Check & Legacy/Default Fallback logic (Optional, based on requirements)
-	// If DB is empty or user not found, we might want to support default creds for initial setup.
-	// But since we are adding security, let's enforce DB user.
-	// If first run, maybe seed DB in main or here?
-	// For simplicity, sticking to the plan: Check DB.
-
 	if result.Error != nil {
-		// Mock logic: If no users exist, allow default login to create one?
-		// Better approach: If username is "admin" and password "admin123!" and NO admins exist.
+		// If no users exist, allow default login
 		var count int64
 		h.DB.Model(&models.Admin{}).Count(&count)
 		if count == 0 && req.Username == "admin" && req.Password == "admin123!" {
-			// Allow login, but maybe prompt to change pw?
-			// Just Generate Token
+			system.Info("Default admin login - no users in database")
 			goto GenerateToken
 		}
+		system.Warn("Failed login attempt for user: %s", req.Username)
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid credentials"})
 	}
 
@@ -58,7 +53,6 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	if err != nil {
 		// Handle Plaintext password (migration)
 		if admin.Password == req.Password {
-			// It was plaintext, upgrade to hash
 			hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 			admin.Password = string(hashed)
 			admin.FailedAttempts = 0
@@ -81,6 +75,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		if admin.FailedAttempts >= 5 {
 			msg = "Account locked for 5 minutes"
 		}
+		system.Warn("Failed login attempt for user: %s (attempt %d)", req.Username, admin.FailedAttempts)
 		return c.Status(401).JSON(fiber.Map{"error": msg})
 	}
 
@@ -88,6 +83,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	admin.FailedAttempts = 0
 	admin.LockedUntil = nil
 	h.DB.Save(&admin)
+	system.Info("User logged in: %s", req.Username)
 
 GenerateToken:
 	// Generate JWT
@@ -101,6 +97,7 @@ GenerateToken:
 		return c.Status(500).JSON(fiber.Map{"error": "Could not login"})
 	}
 
+	AddEvent("success", "User logged in: "+req.Username)
 	return c.JSON(fiber.Map{"token": t})
 }
 
@@ -120,10 +117,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 
 	var admin models.Admin
 	if err := h.DB.Where("username = ?", username).First(&admin).Error; err != nil {
-		// If user doesn't exist in DB (e.g. was default admin), creating...
-		// But verify "default" old password if we want to be strict, or just allow it.
-		// Let's enforce that to change password, you must exist or utilize the default logic hole.
-		// If using default "admin" and DB is empty:
 		var count int64
 		h.DB.Model(&models.Admin{}).Count(&count)
 		if count == 0 && username == "admin" && req.OldPassword == "admin123!" {
@@ -136,9 +129,7 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 	}
 
 	// Verify Old Password
-	// Check hash
 	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(req.OldPassword)); err != nil {
-		// Check plain (migration)
 		if admin.Password != req.OldPassword {
 			return c.Status(401).JSON(fiber.Map{"error": "Incorrect old password"})
 		}
@@ -147,19 +138,45 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 	// Save New Password
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	admin.Password = string(hashed)
-	// Reset locks if any (implicit because they are logged in, but just in case)
 	admin.FailedAttempts = 0
 	admin.LockedUntil = nil
 
 	h.DB.Save(&admin)
+	system.Info("User changed password: %s", username)
 
 	return c.JSON(fiber.Map{"message": "Password updated"})
 }
 
-// Simple Auth Middleware
-func AuthMiddleware() fiber.Handler {
+// JWTAuthMiddleware validates JWT token
+func JWTAuthMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// In production use jwtware
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "Missing authorization header"})
+		}
+
+		// Check Bearer prefix
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			return c.Status(401).JSON(fiber.Map{"error": "Invalid authorization format"})
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Parse and validate token
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fiber.NewError(401, "Invalid signing method")
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			return c.Status(401).JSON(fiber.Map{"error": "Invalid or expired token"})
+		}
+
+		// Store token in context for handlers
+		c.Locals("user", token)
+
 		return c.Next()
 	}
 }

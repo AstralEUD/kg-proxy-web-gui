@@ -19,6 +19,8 @@ type SystemStatus struct {
 	MemoryUsage   int               `json:"memory_usage"`
 	DiskUsage     int               `json:"disk_usage"`
 	Connections   int               `json:"connections"`
+	BlockedCount  int               `json:"blocked_count"`
+	OriginsCount  int               `json:"origins_count"`
 	FirewallRules []string          `json:"firewall_rules"`
 	Events        []SystemEvent     `json:"events"`
 	RequiredPorts []PortRequirement `json:"required_ports"`
@@ -144,6 +146,13 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		}
 	}
 
+	// Count origins and blocked IPs from DB
+	var originsCount int64
+	h.DB.Table("origins").Count(&originsCount)
+
+	var blockedCount int64
+	h.DB.Table("ban_ips").Count(&blockedCount)
+
 	// Build status with real data
 	status := SystemStatus{
 		OS:            runtime.GOOS,
@@ -153,6 +162,8 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		MemoryUsage:   sysInfo.GetMemoryUsage(),
 		DiskUsage:     sysInfo.GetDiskUsage(),
 		Connections:   sysInfo.GetActiveConnections(),
+		BlockedCount:  int(blockedCount),
+		OriginsCount:  int(originsCount),
 		FirewallRules: rules,
 		Events:        GetEventLog(),
 		RequiredPorts: requiredPorts,
