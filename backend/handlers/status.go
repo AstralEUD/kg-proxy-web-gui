@@ -1,13 +1,11 @@
 package handlers
 
 import (
-	"fmt"
+	"kg-proxy-web-gui/backend/services"
+	"kg-proxy-web-gui/backend/system"
 	"runtime"
+	"sync"
 	"time"
-
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/mem"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -19,6 +17,7 @@ type SystemStatus struct {
 	Uptime        string            `json:"uptime"`
 	CPUUsage      int               `json:"cpu_usage"`
 	MemoryUsage   int               `json:"memory_usage"`
+	DiskUsage     int               `json:"disk_usage"`
 	Connections   int               `json:"connections"`
 	FirewallRules []string          `json:"firewall_rules"`
 	Events        []SystemEvent     `json:"events"`
@@ -38,20 +37,25 @@ type PortRequirement struct {
 	Description string `json:"description"`
 }
 
-// Mock event log storage
-var eventLog []SystemEvent
+// Event log storage with mutex for thread safety
+var (
+	eventLog   []SystemEvent
+	eventMutex sync.RWMutex
+)
 
 func init() {
-	eventLog = []SystemEvent{
-		{Time: time.Now().Add(-5 * time.Minute).Format("15:04:05"), Type: "success", Message: "Origin-001 connected successfully"},
-		{Time: time.Now().Add(-3 * time.Minute).Format("15:04:05"), Type: "error", Message: "Blocked SYN flood from 45.33.32.156"},
-		{Time: time.Now().Add(-2 * time.Minute).Format("15:04:05"), Type: "info", Message: "GeoIP database updated"},
-		{Time: time.Now().Add(-1 * time.Minute).Format("15:04:05"), Type: "warning", Message: "High traffic detected on port 20001"},
-	}
+	// Start with empty event log - real events will be added as they happen
+	eventLog = []SystemEvent{}
+
+	// Add startup event
+	AddEvent("success", "KG-Proxy backend started")
 }
 
 // AddEvent adds a new event to the log
 func AddEvent(eventType, message string) {
+	eventMutex.Lock()
+	defer eventMutex.Unlock()
+
 	event := SystemEvent{
 		Time:    time.Now().Format("15:04:05"),
 		Type:    eventType,
@@ -61,48 +65,34 @@ func AddEvent(eventType, message string) {
 	if len(eventLog) > 100 {
 		eventLog = eventLog[:100]
 	}
+
+	// Also log to file
+	switch eventType {
+	case "error":
+		system.Error(message)
+	case "warning":
+		system.Warn(message)
+	default:
+		system.Info(message)
+	}
+}
+
+// GetEvents returns a copy of the event log
+func GetEventLog() []SystemEvent {
+	eventMutex.RLock()
+	defer eventMutex.RUnlock()
+
+	result := make([]SystemEvent, len(eventLog))
+	copy(result, eventLog)
+	return result
 }
 
 // GetSystemStatus returns current system status
 func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	isMock := runtime.GOOS == "windows"
 
-	// Get Real Stats
-	var cpuUsage float64
-	var memUsage, connections int
-	var uptimeStr string
-
-	if isMock {
-		cpuUsage = 45.0
-		memUsage = 62
-		connections = 1245
-		uptimeStr = "2d 5h 32m"
-	} else {
-		// CPU
-		percentages, err := cpu.Percent(0, false)
-		if err == nil && len(percentages) > 0 {
-			cpuUsage = percentages[0]
-		}
-		// Memory
-		v, err := mem.VirtualMemory()
-		if err == nil {
-			memUsage = int(v.UsedPercent)
-		}
-		// Uptime
-		bootTime, err := host.BootTime()
-		if err == nil {
-			uptime := time.Since(time.Unix(int64(bootTime), 0))
-			uptimeStr = formatDuration(uptime)
-		}
-		// WireGuard / Connections using service
-		wgPeers, _, _, wgErr := h.WG.GetPeerStats()
-		if wgErr == nil {
-			connections = wgPeers
-		} else {
-			// On error (e.g. wg not installed or perm error), just show 0 or log
-			// connections = 0 // default
-		}
-	}
+	// Create sysinfo service for real data
+	sysInfo := services.NewSysInfoService()
 
 	// Get firewall rules (mock or real)
 	var rules []string
@@ -119,23 +109,24 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		if err == nil {
 			rules = []string{output}
 		} else {
-			rules = []string{"Error fetching rules: " + err.Error()}
+			system.Error("Failed to get iptables rules: %v", err)
+			rules = []string{"Error fetching rules"}
 		}
 	}
 
 	// Calculate required ports based on services
-	var services []struct {
+	var dbServices []struct {
 		GamePort    int
 		BrowserPort int
 		QueryPort   int
 	}
-	h.DB.Table("services").Select("game_port, browser_port, query_port").Find(&services)
+	h.DB.Table("services").Select("game_port, browser_port, query_port").Find(&dbServices)
 
 	requiredPorts := []PortRequirement{
 		{Port: 51820, Protocol: "UDP", Service: "WireGuard", Description: "VPN Tunnel"},
 	}
 
-	for _, svc := range services {
+	for _, svc := range dbServices {
 		if svc.GamePort > 0 {
 			requiredPorts = append(requiredPorts, PortRequirement{
 				Port: svc.GamePort, Protocol: "UDP", Service: "Game", Description: "Game Traffic",
@@ -153,32 +144,26 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		}
 	}
 
+	// Build status with real data
 	status := SystemStatus{
 		OS:            runtime.GOOS,
 		MockMode:      isMock,
-		Uptime:        uptimeStr,
-		CPUUsage:      int(cpuUsage),
-		MemoryUsage:   memUsage,
-		Connections:   connections,
+		Uptime:        sysInfo.GetUptime(),
+		CPUUsage:      sysInfo.GetCPUUsage(),
+		MemoryUsage:   sysInfo.GetMemoryUsage(),
+		DiskUsage:     sysInfo.GetDiskUsage(),
+		Connections:   sysInfo.GetActiveConnections(),
 		FirewallRules: rules,
-		Events:        eventLog,
+		Events:        GetEventLog(),
 		RequiredPorts: requiredPorts,
 	}
 
 	return c.JSON(status)
 }
 
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Minute)
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	return fmt.Sprintf("%dh %dm", h, m)
-}
-
 // GetEvents returns recent events
 func (h *Handler) GetEvents(c *fiber.Ctx) error {
-	return c.JSON(eventLog)
+	return c.JSON(GetEventLog())
 }
 
 // GetFirewallStatus returns current iptables rules
@@ -209,6 +194,7 @@ Chain OUTPUT (policy ACCEPT)`
 	// Real execution
 	output, err := h.Firewall.Executor.Execute("iptables", "-L", "-n", "-v", "--line-numbers")
 	if err != nil {
+		system.Error("Failed to get firewall status: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
