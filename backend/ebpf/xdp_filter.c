@@ -100,6 +100,17 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         __sync_fetch_and_add(total_bytes, pkt_size);
     }
 
+    // --- Safety Bypass for Private/Local Networks ---
+    __u32 ip_h = bpf_ntohl(src_ip);
+    // 10.0.0.0/8
+    if ((ip_h & 0xFF000000) == 0x0A000000) return XDP_PASS;
+    // 172.16.0.0/12
+    if ((ip_h & 0xFFF00000) == 0xAC100000) return XDP_PASS;
+    // 192.168.0.0/16
+    if ((ip_h & 0xFFFF0000) == 0xC0A80000) return XDP_PASS;
+    // 127.0.0.0/8
+    if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS;
+
     // Check if IP is blocked
     __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
     if (blocked && *blocked == 1) {
@@ -133,30 +144,16 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // Check GeoIP (if enabled)
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &src_ip);
     if (!country) {
-        // IP not in allowed list - drop
-        key = STAT_BLOCKED;
-        __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
-        if (blocked_count)
-            __sync_fetch_and_add(blocked_count, 1);
-
+        // IP not in allowed list - DON'T DROP in XDP for safety.
+        // Let iptables handle it, but still count it as "monitored"
         struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
         if (stats) {
             __sync_fetch_and_add(&stats->packets, 1);
             __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
             __sync_fetch_and_add(&stats->bytes, pkt_size);
             stats->last_seen = bpf_ktime_get_ns();
-            stats->blocked = 1;
-        } else {
-            struct packet_stats new_stats = {
-                .packets = 1,
-                .bytes = (void *)(long)ctx->data_end - (void *)(long)ctx->data,
-                .last_seen = bpf_ktime_get_ns(),
-                .blocked = 1,
-            };
-            bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
         }
-
-        return XDP_DROP;
+        return XDP_PASS; // Pass to iptables
     }
 
     // Allowed - update stats and pass
