@@ -147,6 +147,12 @@ func Error(format string, args ...interface{}) {
 	}
 }
 
+// Debug logs a debug message (currently maps to Info/Stdout)
+func Debug(format string, args ...interface{}) {
+	// For now, treat debug as info or use standard log
+	log.Printf("[DEBUG] "+format, args...)
+}
+
 // Close closes the logger
 func Close() {
 	if globalLogger != nil && globalLogger.file != nil {

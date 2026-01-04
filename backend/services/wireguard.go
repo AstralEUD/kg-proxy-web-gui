@@ -31,7 +31,10 @@ func (s *WireGuardService) GenerateKeys() (string, string, error) {
 		// Try using wg command
 		privKey, err := s.generateKeyWithWG()
 		if err == nil {
-			return privKey, s.derivePublicKey(privKey)
+			pubKey, err := s.derivePublicKey(privKey)
+			if err == nil {
+				return privKey, pubKey, nil
+			}
 		}
 		// Fall back to Go implementation if wg command fails
 	}
