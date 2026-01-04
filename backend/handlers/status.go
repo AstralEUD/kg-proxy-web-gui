@@ -1,22 +1,27 @@
 package handlers
 
 import (
+	"fmt"
 	"runtime"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/mem"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 // SystemStatus represents the current system state
 type SystemStatus struct {
-	OS           string            `json:"os"`
-	MockMode     bool              `json:"mock_mode"`
-	Uptime       string            `json:"uptime"`
-	CPUUsage     int               `json:"cpu_usage"`
-	MemoryUsage  int               `json:"memory_usage"`
-	Connections  int               `json:"connections"`
-	FirewallRules []string         `json:"firewall_rules"`
-	Events       []SystemEvent     `json:"events"`
+	OS            string            `json:"os"`
+	MockMode      bool              `json:"mock_mode"`
+	Uptime        string            `json:"uptime"`
+	CPUUsage      int               `json:"cpu_usage"`
+	MemoryUsage   int               `json:"memory_usage"`
+	Connections   int               `json:"connections"`
+	FirewallRules []string          `json:"firewall_rules"`
+	Events        []SystemEvent     `json:"events"`
 	RequiredPorts []PortRequirement `json:"required_ports"`
 }
 
@@ -62,6 +67,43 @@ func AddEvent(eventType, message string) {
 func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	isMock := runtime.GOOS == "windows"
 
+	// Get Real Stats
+	var cpuUsage float64
+	var memUsage, connections int
+	var uptimeStr string
+
+	if isMock {
+		cpuUsage = 45.0
+		memUsage = 62
+		connections = 1245
+		uptimeStr = "2d 5h 32m"
+	} else {
+		// CPU
+		percentages, err := cpu.Percent(0, false)
+		if err == nil && len(percentages) > 0 {
+			cpuUsage = percentages[0]
+		}
+		// Memory
+		v, err := mem.VirtualMemory()
+		if err == nil {
+			memUsage = int(v.UsedPercent)
+		}
+		// Uptime
+		bootTime, err := host.BootTime()
+		if err == nil {
+			uptime := time.Since(time.Unix(int64(bootTime), 0))
+			uptimeStr = formatDuration(uptime)
+		}
+		// WireGuard / Connections using service
+		wgPeers, _, _, wgErr := h.WG.GetPeerStats()
+		if wgErr == nil {
+			connections = wgPeers
+		} else {
+			// On error (e.g. wg not installed or perm error), just show 0 or log
+			// connections = 0 // default
+		}
+	}
+
 	// Get firewall rules (mock or real)
 	var rules []string
 	if isMock {
@@ -76,6 +118,8 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		output, err := h.Firewall.Executor.Execute("iptables", "-L", "-n", "--line-numbers")
 		if err == nil {
 			rules = []string{output}
+		} else {
+			rules = []string{"Error fetching rules: " + err.Error()}
 		}
 	}
 
@@ -90,7 +134,7 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	requiredPorts := []PortRequirement{
 		{Port: 51820, Protocol: "UDP", Service: "WireGuard", Description: "VPN Tunnel"},
 	}
-	
+
 	for _, svc := range services {
 		if svc.GamePort > 0 {
 			requiredPorts = append(requiredPorts, PortRequirement{
@@ -112,16 +156,24 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	status := SystemStatus{
 		OS:            runtime.GOOS,
 		MockMode:      isMock,
-		Uptime:        "2d 5h 32m",
-		CPUUsage:      45,
-		MemoryUsage:   62,
-		Connections:   1245,
+		Uptime:        uptimeStr,
+		CPUUsage:      int(cpuUsage),
+		MemoryUsage:   memUsage,
+		Connections:   connections,
 		FirewallRules: rules,
 		Events:        eventLog,
 		RequiredPorts: requiredPorts,
 	}
 
 	return c.JSON(status)
+}
+
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	return fmt.Sprintf("%dh %dm", h, m)
 }
 
 // GetEvents returns recent events
@@ -149,7 +201,7 @@ num  target     prot opt source               destination
 
 Chain OUTPUT (policy ACCEPT)`
 		return c.JSON(fiber.Map{
-			"mock": true,
+			"mock":  true,
 			"rules": mockRules,
 		})
 	}
@@ -159,9 +211,9 @@ Chain OUTPUT (policy ACCEPT)`
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	
+
 	return c.JSON(fiber.Map{
-		"mock": false,
+		"mock":  false,
 		"rules": output,
 	})
 }

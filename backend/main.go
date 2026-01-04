@@ -1,11 +1,13 @@
 package main
 
 import (
+	"io"
 	"kg-proxy-web-gui/backend/handlers"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
 	"kg-proxy-web-gui/backend/system"
 	"log"
+	"os"
 
 	"github.com/glebarez/sqlite"
 	"github.com/gofiber/fiber/v2"
@@ -14,6 +16,14 @@ import (
 )
 
 func main() {
+	// 0. Setup Logging
+	logFile, err := os.OpenFile("kg-proxy.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Println("Failed to open log file:", err)
+	} else {
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	}
+
 	// 1. Setup Database
 	db, err := gorm.Open(sqlite.Open("armaguard.db"), &gorm.Config{})
 	if err != nil {
