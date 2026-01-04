@@ -186,6 +186,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":DDOS_PRE - [0:0]\n")
 	sb.WriteString(":GEO_GUARD - [0:0]\n")
 
+	if settings.GlobalProtection {
 		// 1-1. Early Drop: Invalid Packets
 		sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
 
