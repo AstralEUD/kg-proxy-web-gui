@@ -248,6 +248,13 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	sb.WriteString("-A PREROUTING -j GEO_GUARD\n")
 
+	sb.WriteString("-A GEO_GUARD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
+	// Always allow private ranges (SSH, Internal Network)
+	sb.WriteString("-A GEO_GUARD -s 10.0.0.0/8 -j RETURN\n")
+	sb.WriteString("-A GEO_GUARD -s 192.168.0.0/16 -j RETURN\n")
+	sb.WriteString("-A GEO_GUARD -s 172.16.0.0/12 -j RETURN\n")
+	sb.WriteString("-A GEO_GUARD -s 127.0.0.0/8 -j RETURN\n")
+
 	sb.WriteString("-A GEO_GUARD -m set --match-set ban src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")
