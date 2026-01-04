@@ -62,6 +62,14 @@ func main() {
 	api.Post("/users", h.CreateUser)
 	api.Delete("/users/:id", h.DeleteUser)
 
+	// 5. Serve Static Files (Frontend)
+	app.Static("/", "./frontend/dist")
+
+	// 6. SPA Fallback: Serve index.html for all other routes
+	app.Get("/*", func(c *fiber.Ctx) error {
+		return c.SendFile("./frontend/dist/index.html")
+	})
+
 	// Start
 	log.Println("Server starting on :8080 (Mock Mode: " + executor.GetOS() + ")")
 	log.Fatal(app.Listen(":8080"))
