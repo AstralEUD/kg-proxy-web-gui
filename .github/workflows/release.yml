@@ -33,8 +33,10 @@ jobs:
 
       - name: Generate eBPF Go Bindings
         run: |
-          go install github.com/cilium/ebpf/cmd/bpf2go@latest
+          go install github.com/cilium/ebpf/cmd/bpf2go@v0.17.3
           export PATH=$PATH:$(go env GOPATH)/bin
+          # Ensure dependencies are tidy before generation
+          go mod tidy
           cd backend/services
           go generate ./...
           cd ../..

@@ -3,7 +3,7 @@ module kg-proxy-web-gui
 go 1.21
 
 require (
-	github.com/cilium/ebpf v0.12.3
+	github.com/cilium/ebpf v0.17.3
 	github.com/glebarez/sqlite v1.10.0
 	github.com/gofiber/fiber/v2 v2.51.0
 	github.com/golang-jwt/jwt/v4 v4.5.0
