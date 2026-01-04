@@ -35,9 +35,7 @@ jobs:
         run: |
           go install github.com/cilium/ebpf/cmd/bpf2go@v0.17.3
           export PATH=$PATH:$(go env GOPATH)/bin
-          # Generate from root to ensure module context
-          go generate ./backend/services/...
-          # Tidy again because generated files import cilium/ebpf
+          go generate ./...
           go mod tidy
 
       - name: Build eBPF Program
@@ -47,7 +45,7 @@ jobs:
 
       - name: Build Backend (Linux)
         run: |
-          GOOS=linux GOARCH=amd64 go build -o kg-proxy-backend ./backend
+          GOOS=linux GOARCH=amd64 go build -o kg-proxy-backend .
 
       - name: Build Frontend
         run: |
