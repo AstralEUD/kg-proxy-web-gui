@@ -186,54 +186,60 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":DDOS_PRE - [0:0]\n")
 	sb.WriteString(":GEO_GUARD - [0:0]\n")
 
-	if settings.GlobalProtection {
-		// 1-1. Early Drop: Invalid Packets - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
+		// 1-1. Early Drop: Invalid Packets
+		sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
 
-		// 1-2. TCP Flag Validation (Block abnormal flags) - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP\n")
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,RST SYN,RST -j DROP\n")
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,RST FIN,RST -j DROP\n")
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags ALL NONE -j DROP\n")
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,PSH,URG FIN,PSH,URG -j DROP\n")
+		// 1-2. TCP Flag Validation (Block abnormal flags)
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,RST SYN,RST -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,RST FIN,RST -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags ALL NONE -j DROP\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags FIN,PSH,URG FIN,PSH,URG -j DROP\n")
 
-		// 1-3. Block New non-SYN packets - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP\n")
+		// 1-3. Block New non-SYN packets
+		sb.WriteString("-A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP\n")
 
-		// 1-4. Block Abnormal MSS - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp -m conntrack --ctstate NEW -m tcpmss ! --mss 536:65535 -j DROP\n")
+		// 1-4. Block Abnormal MSS
+		sb.WriteString("-A PREROUTING -p tcp -m conntrack --ctstate NEW -m tcpmss ! --mss 536:65535 -j DROP\n")
 
-		// 1-5. Block Fragments - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -f -j DROP\n")
+		// 1-5. Block Fragments
+		sb.WriteString("-A PREROUTING -f -j DROP\n")
 
-		// 1-5a. Block UDP Reflection Attacks - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p udp -m multiport --sports 1900,11211 -j DROP\n")
+		// 1-5a. Block UDP Reflection Attacks - MOVED/REMOVED
+		// ERROR: This blocked DNS responses (Source Port 53) because the server acts as a client.
+		// To fix: We only allow these if state is ESTABLISHED (handled by conntrack usually),
+		// but since this is Mangle/PreRouting, it hits before standard Input allow.
+		// Safest approach for now: Remove blind blocking of sport 53/123.
+		sb.WriteString("-A PREROUTING -p udp -m multiport --sports 1900,11211 -j DROP\n")
 
-		// 1-5b. Block Bogon IPs (Spoofed IPs from local/reserved ranges) on WAN interface - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -i eth0 -s 127.0.0.0/8 -j DROP\n")
-		// sb.WriteString("-A PREROUTING -i eth0 -s 169.254.0.0/16 -j DROP\n")
-		// sb.WriteString("-A PREROUTING -i eth0 -s 224.0.0.0/4 -j DROP\n")
+		// 1-5b. Block Bogon IPs (Spoofed IPs from local/reserved ranges) on WAN interface
+		sb.WriteString("-A PREROUTING -i eth0 -s 127.0.0.0/8 -j DROP\n")
+		sb.WriteString("-A PREROUTING -i eth0 -s 169.254.0.0/16 -j DROP\n")
+		sb.WriteString("-A PREROUTING -i eth0 -s 224.0.0.0/4 -j DROP\n")
 		// Extended Bogon (Private ranges that shouldn't appear on public internet/eth0)
 		// sb.WriteString("-A PREROUTING -i eth0 -s 192.168.0.0/16 -j DROP\n")
 		// sb.WriteString("-A PREROUTING -i eth0 -s 172.16.0.0/12 -j DROP\n")
+		// Note: We keep private ranges allowed for now to prevent accidental lockout if behind NAT/VPC.
 
-		// 1-5g. Block Database Ports (No reason for external access) - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
-		// sb.WriteString("-A PREROUTING -p udp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
+		// 1-5g. Block Database Ports (No reason for external access)
+		sb.WriteString("-A PREROUTING -p tcp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
+		sb.WriteString("-A PREROUTING -p udp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
 
-		// 1-5c. Limit ICMP (Ping) to prevent flood - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m limit --limit 2/second -j ACCEPT\n")
-		// sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
+		// 1-5c. Limit ICMP (Ping) to prevent flood
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m limit --limit 2/second -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
 
-		// 1-5d. Block empty UDP packets (Length check) - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p udp -m length --length 0:28 -j DROP\n")
+		// 1-5d. Block empty UDP packets (Length check)
+		// IP Header (20) + UDP Header (8) = 28 bytes. Anything <= 28 means no payload.
+		// Game packets always have payload.
+		sb.WriteString("-A PREROUTING -p udp -m length --length 0:28 -j DROP\n")
 
-		// 1-5e. TCP RST Flood Protection - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT\n")
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -j DROP\n")
+		// 1-5e. TCP RST Flood Protection
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -j DROP\n")
 
-		// 1-5f. Block SYN-ACK Flood (Packets with SYN+ACK but no established connection) - DISABLED FOR SAFETY
-		// sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
+		// 1-5f. Block SYN-ACK Flood (Packets with SYN+ACK but no established connection)
+		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
 	}
 
 	// 1-6. Apply GEO_GUARD logic (Drop if not allowed)
