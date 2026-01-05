@@ -95,9 +95,6 @@ func (h *Handler) UpdateOrigin(c *fiber.Ctx) error {
 
 	origin.Name = input.Name
 	origin.WgIP = input.WgIP
-	origin.ReforgerGamePort = input.ReforgerGamePort
-	origin.ReforgerBrowserPort = input.ReforgerBrowserPort
-	origin.ReforgerA2SPort = input.ReforgerA2SPort
 
 	if err := h.DB.Save(&origin).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
