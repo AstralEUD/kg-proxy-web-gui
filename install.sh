@@ -108,11 +108,11 @@ fi
 
 chmod +x $INSTALL_DIR/kg-proxy-backend
 
-# Fix permissions for astral user (if exists) so they can fix things later
-if id "astral" &>/dev/null; then
-    echo "Setting ownership for user 'astral' to allow easier management..."
-    chown -R astral:astral $INSTALL_DIR
-    chown -R astral:astral $DATA_DIR
+# Fix permissions for sudo user (if exists) so they can fix things later
+if [ -n "$SUDO_USER" ]; then
+    echo "Setting ownership for user '$SUDO_USER' to allow easier management..."
+    chown -R $SUDO_USER:$(id -gn $SUDO_USER) $INSTALL_DIR
+    chown -R $SUDO_USER:$(id -gn $SUDO_USER) $DATA_DIR
 fi
 
 # 6. Configure System Hardening (Sysctl)
