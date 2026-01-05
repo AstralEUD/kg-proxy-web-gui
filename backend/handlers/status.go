@@ -118,6 +118,10 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	h.DB.Table("services").Select("public_game_port, public_browser_port, public_a2s_port").Find(&dbServices)
 
 	requiredPorts := []PortRequirement{
+		{Port: 22, Protocol: "TCP", Service: "SSH", Description: "Remote Management"},
+		{Port: 80, Protocol: "TCP", Service: "HTTP", Description: "Web Redirect"},
+		{Port: 443, Protocol: "TCP", Service: "HTTPS", Description: "Web GUI (Secure)"},
+		{Port: 8080, Protocol: "TCP", Service: "HTTP", Description: "Web GUI (Alternative)"},
 		{Port: 51820, Protocol: "UDP", Service: "WireGuard", Description: "VPN Tunnel"},
 	}
 

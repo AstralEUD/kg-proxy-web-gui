@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
     Box, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
     TextField, InputAdornment, Chip, Grid, Card, CardContent, TablePagination, TableSortLabel,
-    MenuItem, Select, FormControl, InputLabel, CircularProgress
+    MenuItem, Select, FormControl, InputLabel, CircularProgress, Button, Dialog, DialogTitle,
+    DialogContent, DialogActions, Paper
 } from '@mui/material';
-import { Search, Speed, FilterList } from '@mui/icons-material';
+import { Search, Speed, FilterList, Router, Dns, Security } from '@mui/icons-material';
 import { ServicePipe, WorldMap2D } from '../components/Visualizations';
 import client from '../api/client';
 
@@ -20,8 +21,9 @@ export default function Traffic() {
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterRisk, setFilterRisk] = useState('all');
 
-    const [backendStats, setBackendStats] = useState({ connections: 0, uptime: '-', mock_mode: true });
+    const [backendStats, setBackendStats] = useState({ connections: 0, uptime: '-', mock_mode: true, required_ports: [] });
     const [loading, setLoading] = useState(true);
+    const [portsOpen, setPortsOpen] = useState(false);
 
     // Fetch real backend status and eBPF traffic data
     useEffect(() => {
@@ -118,13 +120,24 @@ export default function Traffic() {
                             <Typography variant="subtitle2" sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10, color: '#888' }}>
                                 🌍 Global Traffic Map
                             </Typography>
-                            <Chip
-                                label={backendStats.mock_mode ? "Simulation Data" : "Real-time Data"}
-                                size="small"
-                                sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}
-                                color={backendStats.mock_mode ? "warning" : "success"}
-                                variant="outlined"
-                            />
+                            <Box sx={{ position: 'absolute', top: 16, right: 16, zIndex: 10, display: 'flex', gap: 1 }}>
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<Router />}
+                                    onClick={() => setPortsOpen(true)}
+                                    sx={{ color: '#00e5ff', borderColor: '#00e5ff80', bgcolor: '#00000080' }}
+                                >
+                                    Required Ports
+                                </Button>
+                                <Chip
+                                    label={backendStats.mock_mode ? "Simulation Data" : "Real-time Data"}
+                                    size="small"
+                                    color={backendStats.mock_mode ? "warning" : "success"}
+                                    variant="outlined"
+                                    sx={{ bgcolor: '#00000080' }}
+                                />
+                            </Box>
                             <Box sx={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                                 <WorldMap2D data={filteredData} />
                             </Box>
@@ -288,6 +301,50 @@ export default function Traffic() {
                     </>
                 )}
             </Card>
+
+            <Dialog open={portsOpen} onClose={() => setPortsOpen(false)} PaperProps={{ sx: { bgcolor: '#111', border: '1px solid #333', minWidth: 500 } }}>
+                <DialogTitle sx={{ color: '#fff', display: 'flex', alignItems: 'center' }}>
+                    <Router sx={{ mr: 1, color: '#00e5ff' }} />
+                    Firewall Configuration Guide
+                </DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
+                        Please ensure the following ports are OPEN on your VPS firewall (e.g. AWS Security Group, Vultr Firewall).
+                    </Typography>
+
+                    <TableContainer component={Paper} sx={{ bgcolor: '#000', border: '1px solid #333' }}>
+                        <Table size="small">
+                            <TableHead>
+                                <TableRow sx={{ '& th': { color: '#888', borderColor: '#222' } }}>
+                                    <TableCell>Port</TableCell>
+                                    <TableCell>Protocol</TableCell>
+                                    <TableCell>Service</TableCell>
+                                    <TableCell>Description</TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {backendStats.required_ports && backendStats.required_ports.length > 0 ? (
+                                    backendStats.required_ports.map((p, i) => (
+                                        <TableRow key={i} sx={{ '& td': { color: '#ccc', borderColor: '#222' } }}>
+                                            <TableCell sx={{ color: '#00e5ff', fontWeight: 'bold' }}>{p.port}</TableCell>
+                                            <TableCell>{p.protocol}</TableCell>
+                                            <TableCell>{p.service}</TableCell>
+                                            <TableCell sx={{ color: '#888' }}>{p.description}</TableCell>
+                                        </TableRow>
+                                    ))
+                                ) : (
+                                    <TableRow>
+                                        <TableCell colSpan={4} align="center" sx={{ color: '#666' }}>Loading or no ports required...</TableCell>
+                                    </TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setPortsOpen(false)} sx={{ color: '#888' }}>Close</Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }
