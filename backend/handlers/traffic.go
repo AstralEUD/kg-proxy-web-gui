@@ -23,6 +23,7 @@ func (h *Handler) GetTrafficData(c *fiber.Ctx) error {
 	for _, entry := range data {
 		trafficList = append(trafficList, map[string]interface{}{
 			"ip":          entry.SourceIP,
+			"port":        entry.DestPort,
 			"countryCode": entry.CountryCode,
 			"countryName": getCountryName(entry.CountryCode),
 			"pps":         entry.PacketCount,

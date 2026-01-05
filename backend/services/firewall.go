@@ -251,6 +251,16 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 		// 1-5f. Block SYN-ACK Flood (Packets with SYN+ACK but no established connection)
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
+
+		// 1-5h. UDP Flood Protection (Per-IP Rate Limit)
+		// Limit each source IP to 120,000 packets/sec (approx 100Mbps for small packets).
+		// This is extremely high for a game but ensures no legitimate traffic is dropped.
+		sb.WriteString("-A PREROUTING -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 120000/sec --hashlimit-burst 240000 -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p udp -j DROP\n")
+
+		// 1-5i. ICMP Flood Protection (Per-IP)
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp_flood --hashlimit-mode srcip --hashlimit-upto 5/sec --hashlimit-burst 10 -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
 	}
 
 	// 1-6. Apply GEO_GUARD logic (Drop if not allowed)

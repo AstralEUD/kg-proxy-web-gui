@@ -244,6 +244,7 @@ export default function Traffic() {
                                         <TableCell>
                                             <TableSortLabel active={orderBy === 'ip'} direction={orderBy === 'ip' ? order : 'asc'} onClick={() => handleSort('ip')}>IP Address</TableSortLabel>
                                         </TableCell>
+                                        <TableCell align="right">Port</TableCell>
                                         <TableCell>Country</TableCell>
                                         <TableCell align="right">
                                             <TableSortLabel active={orderBy === 'pps'} direction={orderBy === 'pps' ? order : 'asc'} onClick={() => handleSort('pps')}>PPS</TableSortLabel>
@@ -260,6 +261,9 @@ export default function Traffic() {
                                     {filteredData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage).map((row) => (
                                         <TableRow key={row.id} hover sx={{ '&:hover': { bgcolor: '#ffffff05' } }}>
                                             <TableCell sx={{ color: '#00e5ff', fontFamily: 'monospace' }}>{row.ip}</TableCell>
+                                            <TableCell align="right" sx={{ color: '#aaa', fontFamily: 'monospace' }}>
+                                                {row.port && row.port > 0 ? row.port : '-'}
+                                            </TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                                     <Box component="span" sx={{ bgcolor: '#333', color: '#fff', px: 1, py: 0.5, borderRadius: 1, fontSize: 12, fontWeight: 'bold', minWidth: 28, textAlign: 'center' }}>
@@ -316,9 +320,9 @@ export default function Traffic() {
                         <Table size="small">
                             <TableHead>
                                 <TableRow sx={{ '& th': { color: '#888', borderColor: '#222' } }}>
-                                    <TableCell>Port</TableCell>
+                                    <TableCell>Public Port</TableCell>
                                     <TableCell>Protocol</TableCell>
-                                    <TableCell>Service</TableCell>
+                                    <TableCell>Service Type</TableCell>
                                     <TableCell>Description</TableCell>
                                 </TableRow>
                             </TableHead>
