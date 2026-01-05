@@ -213,8 +213,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// 1-4. Block Abnormal MSS
 		sb.WriteString("-A PREROUTING -p tcp -m conntrack --ctstate NEW -m tcpmss ! --mss 536:65535 -j DROP\n")
 
-		// 1-5. Block Fragments
-		sb.WriteString("-A PREROUTING -f -j DROP\n")
+		// 1-5. Block Fragments - REMOVED for Arma 3 Compatibility
+		// Arma 3 uses fragmented UDP packets for server details. Blocking this breaks server browser listings.
+		// sb.WriteString("-A PREROUTING -f -j DROP\n")
 
 		// 1-5a. Block UDP Reflection Attacks - MOVED/REMOVED
 		// ERROR: This blocked DNS responses (Source Port 53) because the server acts as a client.
@@ -274,11 +275,25 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// 4. eBPF/Application level monitoring (Traffic Analysis)
 
 	sb.WriteString("-A PREROUTING -j GEO_GUARD\n")
+	sb.WriteString("-A GEO_GUARD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
 
 	// Exempt management ports from GEO_GUARD to prevent lockout
 	sb.WriteString("-A GEO_GUARD -p tcp -m multiport --dports 22,80,443,8080 -j RETURN\n")
 
-	sb.WriteString("-A GEO_GUARD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
+	// Steam Query Bypass (A2S_INFO, A2S_PLAYER, A2S_RULES)
+	// Signatures: T (54), U (55), V (56). Payload start around byte 28 (20 IP + 8 UDP).
+	// We use direct hex matching for safety.
+	if settings.SteamQueryBypass {
+		// A2S_INFO (Source Engine Query) - 'T'
+		sb.WriteString("-A GEO_GUARD -p udp -m string --algo bm --hex-string \"|ffffffff54|\" --from 28 --to 40 -j RETURN\n")
+		// A2S_PLAYER - 'U'
+		sb.WriteString("-A GEO_GUARD -p udp -m string --algo bm --hex-string \"|ffffffff55|\" --from 28 --to 40 -j RETURN\n")
+		// A2S_RULES - 'V'
+		sb.WriteString("-A GEO_GUARD -p udp -m string --algo bm --hex-string \"|ffffffff56|\" --from 28 --to 40 -j RETURN\n")
+		// Challenge Response (Simple 'q' or legacy A2S_PLAYER challenge) - 'W' (57)
+		sb.WriteString("-A GEO_GUARD -p udp -m string --algo bm --hex-string \"|ffffffff57|\" --from 28 --to 40 -j RETURN\n")
+	}
+
 	// Always allow private ranges (SSH, Internal Network)
 	sb.WriteString("-A GEO_GUARD -s 10.0.0.0/8 -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -s 192.168.0.0/16 -j RETURN\n")

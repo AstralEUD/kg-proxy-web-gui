@@ -244,6 +244,20 @@ export default function Policy() {
 
                             <FormControlLabel control={<Switch checked={settings.block_vpn} onChange={handleChange('block_vpn')} color="error" />} label="Block Known VPN/Proxy Ranges" sx={{ color: '#ccc' }} />
                             <FormControlLabel control={<Switch checked={settings.block_tor} onChange={handleChange('block_tor')} color="error" />} label="Block TOR Exit Nodes" sx={{ color: '#ccc' }} />
+                            <Divider sx={{ my: 2, bgcolor: '#333' }} />
+                            <FormControlLabel
+                                control={<Switch checked={settings.steam_query_bypass} onChange={handleChange('steam_query_bypass')} color="success" />}
+                                label={
+                                    <Box>
+                                        <Typography variant="body1">Allow Steam Server Queries (Global)</Typography>
+                                        <Typography variant="caption" sx={{ color: '#888' }}>
+                                            Bypasses Geo-IP for server browser listings (A2S_INFO). <br />
+                                            Required for your server to appear in the global server list.
+                                        </Typography>
+                                    </Box>
+                                }
+                                sx={{ color: '#fff', alignItems: 'flex-start', ml: 0 }}
+                            />
                         </CardContent>
                     </Card>
                 </Grid>

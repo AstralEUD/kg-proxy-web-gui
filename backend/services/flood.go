@@ -124,7 +124,7 @@ func (fp *FloodProtection) getThresholds() ProtectionThresholds {
 	case 0: // Low
 		return ProtectionThresholds{
 			MaxConnPerSec:    100,
-			MaxPacketsPerSec: 10000,
+			MaxPacketsPerSec: 50000,             // Increased for Arma Reforger
 			MaxBytesPerSec:   100 * 1024 * 1024, // 100 MB/s
 			MaxViolations:    10,
 			BlockDuration:    5 * time.Minute,
@@ -132,7 +132,7 @@ func (fp *FloodProtection) getThresholds() ProtectionThresholds {
 	case 1: // Standard
 		return ProtectionThresholds{
 			MaxConnPerSec:    50,
-			MaxPacketsPerSec: 5000,
+			MaxPacketsPerSec: 30000,            // Increased for Arma Reforger
 			MaxBytesPerSec:   50 * 1024 * 1024, // 50 MB/s
 			MaxViolations:    5,
 			BlockDuration:    10 * time.Minute,
@@ -140,7 +140,7 @@ func (fp *FloodProtection) getThresholds() ProtectionThresholds {
 	case 2: // High
 		return ProtectionThresholds{
 			MaxConnPerSec:    20,
-			MaxPacketsPerSec: 2000,
+			MaxPacketsPerSec: 20000,            // Increased for Arma Reforger
 			MaxBytesPerSec:   20 * 1024 * 1024, // 20 MB/s
 			MaxViolations:    3,
 			BlockDuration:    30 * time.Minute,

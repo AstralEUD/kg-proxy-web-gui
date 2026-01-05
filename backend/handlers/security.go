@@ -44,6 +44,7 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		ProtectionLevel   int      `json:"protection_level"`
 		GeoAllowCountries []string `json:"geo_allow_countries"`
 		SmartBanning      bool     `json:"smart_banning"`
+		SteamQueryBypass  bool     `json:"steam_query_bypass"`
 		EBPFEnabled       bool     `json:"ebpf_enabled"`
 		BlockedIPs        []string `json:"blocked_ips"`
 	}
@@ -67,6 +68,7 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	settings.ProtectionLevel = input.ProtectionLevel
 	settings.GeoAllowCountries = strings.Join(input.GeoAllowCountries, ",")
 	settings.SmartBanning = input.SmartBanning
+	settings.SteamQueryBypass = input.SteamQueryBypass
 	settings.EBPFEnabled = input.EBPFEnabled
 
 	// Save to DB

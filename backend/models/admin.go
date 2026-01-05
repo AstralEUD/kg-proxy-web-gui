@@ -24,6 +24,7 @@ type SecuritySettings struct {
 	ProtectionLevel   int       `gorm:"default:2" json:"protection_level"`       // 0=low, 1=standard, 2=high
 	GeoAllowCountries string    `gorm:"default:'KR'" json:"geo_allow_countries"` // Comma-separated country codes
 	SmartBanning      bool      `gorm:"default:false" json:"smart_banning"`
+	SteamQueryBypass  bool      `gorm:"default:true" json:"steam_query_bypass"` // Allow Steam A2S queries globally
 	EBPFEnabled       bool      `gorm:"default:false" json:"ebpf_enabled"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
