@@ -60,14 +60,6 @@ type EBPFService struct {
 func NewEBPFService() *EBPFService {
 	// Calculate boot time to handle monotonic timestamps
 	// We use the SysInfoService or just standard uptime
-	sysInfo := system.NewSysInfoService()
-	uptimeSeconds := sysInfo.GetUptime() // Returns seconds as int64 or float
-	// Actually GetUptime returns only formatted string or interface? Need to check.
-	// Let's assume we can get uptime.
-	// If GetUptime returns seconds:
-	// bootTime = Now - Uptime
-	// But SysInfoService might not expose raw seconds.
-	// Let's use a simpler approach reading /proc/uptime if on Linux.
 
 	now := time.Now()
 	boot := now // Default fallback
@@ -84,7 +76,7 @@ func NewEBPFService() *EBPFService {
 	}
 
 	// Better: Use a helper
-	boot = system.GetBootTime()
+	boot = GetBootTime()
 
 	return &EBPFService{
 		enabled:     false,

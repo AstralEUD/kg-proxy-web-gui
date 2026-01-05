@@ -3,7 +3,6 @@ package services
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
@@ -198,13 +197,8 @@ func excludeNetwork(baseStr, excludeStr string) []string {
 
 	// Right child
 	// Calculate offset
-	mask := net.CIDRMask(prefix, 32)
 	ipInt := ipToUint32(leftIP)
-	// Add 1 at the bit position of the new prefix?
-	// Actually, size of the new block is 2^(32-prefix)
-	// e.g., /0 -> /1. Left 0.0.0.0/1. Right 128.0.0.0/1
-	// 0.0.0.0 = 0. 128.0.0.0 = 1 << 31.
-
+	// size of the new block is 2^(32-prefix)
 	size := uint32(1) << (32 - prefix)
 	rightIPInt := ipInt + size
 	rightIP := uint32ToIP(rightIPInt)
@@ -229,22 +223,6 @@ func networkContains(n1, n2 *net.IPNet) bool {
 	s1, _ := n1.Mask.Size()
 	s2, _ := n2.Mask.Size()
 	return s1 <= s2 && n1.Contains(n2.IP)
-}
-
-// Helper: Reusing ipToUint32 from ebpf.go if possible, but package separation.
-// Implementing local helpers for WireGuard service
-func ipToUint32(ip net.IP) uint32 {
-	ip = ip.To4()
-	if ip == nil {
-		return 0
-	}
-	return binary.BigEndian.Uint32(ip)
-}
-
-func uint32ToIP(n uint32) net.IP {
-	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, n)
-	return ip
 }
 
 func (s *WireGuardService) generateClientConfig(peer *models.WireGuardPeer, vpsIP string) string {
