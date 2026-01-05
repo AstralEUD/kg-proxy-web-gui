@@ -43,7 +43,13 @@ func main() {
 	system.Info("Database connected: %s", dbPath)
 
 	// Migrate
-	db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.AllowForeign{}, &models.BanIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{})
+	// Migrate
+	// CRITICAL: Ensure schema is up to date. Panic if migration fails.
+	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.AllowForeign{}, &models.BanIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
+		system.Error("Database migration failed: %v", err)
+		log.Fatalf("CRITICAL: Database migration failed. Application cannot start: %v", err)
+	}
+	system.Info("Database migration completed successfully")
 
 	// 2. Setup Services
 	executor := system.NewExecutor()

@@ -46,6 +46,31 @@ func (s *SysInfoService) GetUptime() string {
 	return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
 }
 
+// GetBootTime returns the estimated system boot time
+func GetBootTime() time.Time {
+	if runtime.GOOS != "linux" {
+		// Mock for windows
+		return time.Now().Add(-1 * time.Hour)
+	}
+
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return time.Now()
+	}
+
+	parts := strings.Fields(string(data))
+	if len(parts) < 1 {
+		return time.Now()
+	}
+
+	seconds, err := strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return time.Now()
+	}
+
+	return time.Now().Add(-time.Duration(seconds * float64(time.Second)))
+}
+
 // GetCPUUsage returns current CPU usage percentage (0-100)
 func (s *SysInfoService) GetCPUUsage() int {
 	if runtime.GOOS != "linux" {

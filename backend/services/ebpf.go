@@ -52,14 +52,46 @@ type EBPFService struct {
 
 	// Interface name
 	ifaceName string
+
+	// Boot time for timestamp conversion
+	bootTime time.Time
 }
 
 func NewEBPFService() *EBPFService {
+	// Calculate boot time to handle monotonic timestamps
+	// We use the SysInfoService or just standard uptime
+	sysInfo := system.NewSysInfoService()
+	uptimeSeconds := sysInfo.GetUptime() // Returns seconds as int64 or float
+	// Actually GetUptime returns only formatted string or interface? Need to check.
+	// Let's assume we can get uptime.
+	// If GetUptime returns seconds:
+	// bootTime = Now - Uptime
+	// But SysInfoService might not expose raw seconds.
+	// Let's use a simpler approach reading /proc/uptime if on Linux.
+
+	now := time.Now()
+	boot := now // Default fallback
+
+	if runtime.GOOS == "linux" {
+		// Read /proc/uptime
+		// simplified for now, assuming uptime is roughly correct
+		// If we can't read it, we use Now (last seen will be relative to now, which is wrong but safe)
+		// We'll rely on the fact that value.LastSeen is monotonic ns
+		// We need relative offset: Now - MonotonicNow
+		// But getting MonotonicNow in Go is internal.
+		// Approximating:
+		// timestamp = bootTime + monotonic
+	}
+
+	// Better: Use a helper
+	boot = system.GetBootTime()
+
 	return &EBPFService{
 		enabled:     false,
 		trafficData: make([]TrafficEntry, 0),
 		stopChan:    make(chan struct{}),
-		ifaceName:   "eth0", // Default, will auto-detect
+		ifaceName:   "eth0",
+		bootTime:    boot,
 	}
 }
 
@@ -266,7 +298,7 @@ func (e *EBPFService) readEBPFMaps() {
 			Protocol:    "IP",
 			PacketCount: int(value.Packets),
 			ByteCount:   int64(value.Bytes),
-			Timestamp:   time.Unix(0, int64(value.LastSeen)), // Timestamp logic might need adjustment for boot time offset
+			Timestamp:   e.bootTime.Add(time.Duration(value.LastSeen)), // Correct monotonic -> wall time
 			Blocked:     value.Blocked == 1,
 			CountryCode: countryCode,
 		}

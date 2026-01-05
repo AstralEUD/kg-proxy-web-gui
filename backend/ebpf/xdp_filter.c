@@ -100,7 +100,25 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         __sync_fetch_and_add(total_bytes, pkt_size);
     }
 
-    // --- Safety Bypass for Private/Local Networks ---
+    // --- 1. Track Statistics for ALL IPs (including Private) ---
+    struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
+    __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
+    
+    if (stats) {
+        __sync_fetch_and_add(&stats->packets, 1);
+        __sync_fetch_and_add(&stats->bytes, pkt_size);
+        stats->last_seen = bpf_ktime_get_ns();
+    } else {
+        struct packet_stats new_stats = {
+            .packets = 1,
+            .bytes = pkt_size,
+            .last_seen = bpf_ktime_get_ns(),
+            .blocked = 0,
+        };
+        bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
+    }
+
+    // --- 2. Safety Bypass for Private/Local Networks ---
     __u32 ip_h = bpf_ntohl(src_ip);
     // 10.0.0.0/8
     if ((ip_h & 0xFF000000) == 0x0A000000) return XDP_PASS;
@@ -111,82 +129,37 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // 127.0.0.0/8
     if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS;
 
-    // Check if IP is blocked
+    // --- 3. Check Blocked List ---
     __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
     if (blocked && *blocked == 1) {
-        // Update blocked counter
+        // Mark as blocked in stats (need to update again or set flag? re-lookup is safest for concurrent map access if not using spinlocks)
+        // Since we already updated stats, we just need to set the blocked flag.
+        // However, updating existing element is tricky without race.
+        // We will just assume it's set on next packet or try valid lookup.
+        if (stats) stats->blocked = 1;
+
+        // Update global blocked count
         key = STAT_BLOCKED;
         __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
         if (blocked_count)
             __sync_fetch_and_add(blocked_count, 1);
 
-        // Update per-IP stats
-        struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-        if (stats) {
-            __sync_fetch_and_add(&stats->packets, 1);
-            __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
-            __sync_fetch_and_add(&stats->bytes, pkt_size);
-            stats->last_seen = bpf_ktime_get_ns();
-            stats->blocked = 1;
-        } else {
-            struct packet_stats new_stats = {
-                .packets = 1,
-                .bytes = (void *)(long)ctx->data_end - (void *)(long)ctx->data,
-                .last_seen = bpf_ktime_get_ns(),
-                .blocked = 1,
-            };
-            bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
-        }
-
         return XDP_DROP;
     }
 
-    // Check GeoIP (if enabled)
+    // --- 4. Check GeoIP ---
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &src_ip);
     if (!country) {
-        // IP not in allowed list - DON'T DROP in XDP for safety.
-        // Let iptables handle it, but still count it as "monitored"
-        struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-        if (stats) {
-            __sync_fetch_and_add(&stats->packets, 1);
-            __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
-            __sync_fetch_and_add(&stats->bytes, pkt_size);
-            stats->last_seen = bpf_ktime_get_ns();
-        } else {
-            // Create new entry for unknown IP
-            struct packet_stats new_stats = {
-                .packets = 1,
-                .bytes = (void *)(long)ctx->data_end - (void *)(long)ctx->data,
-                .last_seen = bpf_ktime_get_ns(),
-                .blocked = 0,
-            };
-            bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
-        }
-        return XDP_PASS; // Pass to iptables
+        // IP not in allowed list - DON'T DROP in XDP for safety yet.
+        // But we tracked it.
+        return XDP_PASS; 
     }
 
-    // Allowed - update stats and pass
+    // --- 5. Allowed ---
     key = STAT_ALLOWED;
     __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
     if (allowed_count)
         __sync_fetch_and_add(allowed_count, 1);
-
-    struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-    if (stats) {
-        __sync_fetch_and_add(&stats->packets, 1);
-        __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
-        __sync_fetch_and_add(&stats->bytes, pkt_size);
-        stats->last_seen = bpf_ktime_get_ns();
-        stats->blocked = 0;
-    } else {
-        struct packet_stats new_stats = {
-            .packets = 1,
-            .bytes = (void *)(long)ctx->data_end - (void *)(long)ctx->data,
-            .last_seen = bpf_ktime_get_ns(),
-            .blocked = 0,
-        };
-        bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
-    }
 
     return XDP_PASS;
 }
