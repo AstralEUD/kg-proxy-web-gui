@@ -79,12 +79,7 @@ func (e *EBPFService) Enable() error {
 
 	// Only try real eBPF on Linux
 	if runtime.GOOS != "linux" {
-		system.Warn("eBPF only supported on Linux, using simulation mode")
-		e.enabled = true
-		e.isRunning = true
-		e.stopChan = make(chan struct{})
-		go e.collectTrafficSimulation()
-		return nil
+		return fmt.Errorf("eBPF is only supported on Linux")
 	}
 
 	// Try to load real eBPF program
@@ -321,56 +316,6 @@ func (e *EBPFService) detachEBPF() {
 	}
 }
 
-// collectTrafficSimulation simulates traffic collection (fallback for non-Linux)
-func (e *EBPFService) collectTrafficSimulation() {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	countries := []string{"KR", "US", "CN", "JP", "DE", "RU", "BR", "GB", "CA", "AU"}
-
-	for {
-		select {
-		case <-e.stopChan:
-			return
-		case <-ticker.C:
-			numEntries := 5 + (time.Now().Unix() % 10)
-
-			e.mu.Lock()
-			for i := int64(0); i < numEntries; i++ {
-				ip := fmt.Sprintf("%d.%d.%d.%d",
-					1+(time.Now().Unix()+i)%254,
-					(time.Now().Unix()+i*2)%256,
-					(time.Now().Unix()+i*3)%256,
-					1+(time.Now().Unix()+i*4)%254)
-
-				countryCode := "XX"
-				if e.geoIPService != nil {
-					countryCode = e.geoIPService.GetCountryCode(ip)
-				} else {
-					countryCode = countries[i%int64(len(countries))]
-				}
-
-				entry := TrafficEntry{
-					SourceIP:    ip,
-					DestPort:    []int{2302, 2303, 2304, 27016, 17777}[i%5],
-					Protocol:    "UDP",
-					PacketCount: int(100 + (time.Now().Unix()+i)%900),
-					ByteCount:   int64(1000 + (time.Now().Unix()+i*100)%99000),
-					Timestamp:   time.Now(),
-					Blocked:     (time.Now().Unix()+i)%10 == 0,
-					CountryCode: countryCode,
-				}
-				e.trafficData = append(e.trafficData, entry)
-			}
-
-			if len(e.trafficData) > 1000 {
-				e.trafficData = e.trafficData[len(e.trafficData)-1000:]
-			}
-			e.mu.Unlock()
-		}
-	}
-}
-
 // GetTrafficData returns current traffic data
 func (e *EBPFService) GetTrafficData() []TrafficEntry {
 	e.mu.RLock()
@@ -404,15 +349,8 @@ func (e *EBPFService) GetStats() map[string]interface{} {
 		"blocked_entries": totalBlocked,
 		"countries":       countryMap,
 		"enabled":         e.enabled,
-		"mode":            e.getMode(),
+		"mode":            "eBPF/XDP",
 	}
-}
-
-func (e *EBPFService) getMode() string {
-	if e.objs != nil {
-		return "eBPF/XDP"
-	}
-	return "Simulation"
 }
 
 // IsEnabled returns whether eBPF is currently enabled

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"kg-proxy-web-gui/backend/services"
 	"kg-proxy-web-gui/backend/system"
 	"runtime"
@@ -91,29 +92,19 @@ func GetEventLog() []SystemEvent {
 
 // GetSystemStatus returns current system status
 func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
-	isMock := runtime.GOOS == "windows"
-
 	// Create sysinfo service for real data
 	sysInfo := services.NewSysInfoService()
 
-	// Get firewall rules (mock or real)
+	// 1. Get Firewall Rules (Real execution)
+	// We want to see actual rules. If it fails, we report error in the rules array.
 	var rules []string
-	if isMock {
-		rules = []string{
-			"-A INPUT -p tcp --dport 51820 -j ACCEPT",
-			"-A INPUT -i wg0 -j ACCEPT",
-			"-A FORWARD -i wg0 -o eth0 -j ACCEPT",
-			"-A INPUT -m conntrack --ctstate INVALID -j DROP",
-		}
+	output, err := h.Firewall.Executor.Execute("iptables", "-L", "-n", "--line-numbers")
+	if err == nil {
+		rules = []string{output}
 	} else {
-		// Real mode: execute iptables -L -n
-		output, err := h.Firewall.Executor.Execute("iptables", "-L", "-n", "--line-numbers")
-		if err == nil {
-			rules = []string{output}
-		} else {
-			system.Error("Failed to get iptables rules: %v", err)
-			rules = []string{"Error fetching rules"}
-		}
+		// Just log, don't fail the whole request
+		system.Warn("Failed to get iptables rules (is this Linux?): %v", err)
+		rules = []string{fmt.Sprintf("Error fetching rules: %v", err)}
 	}
 
 	// Calculate required ports based on services
@@ -156,7 +147,7 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	// Build status with real data
 	status := SystemStatus{
 		OS:            runtime.GOOS,
-		MockMode:      isMock,
+		MockMode:      false, // Always false now
 		Uptime:        sysInfo.GetUptime(),
 		CPUUsage:      sysInfo.GetCPUUsage(),
 		MemoryUsage:   sysInfo.GetMemoryUsage(),
@@ -179,30 +170,7 @@ func (h *Handler) GetEvents(c *fiber.Ctx) error {
 
 // GetFirewallStatus returns current iptables rules
 func (h *Handler) GetFirewallStatus(c *fiber.Ctx) error {
-	isMock := runtime.GOOS == "windows"
-
-	if isMock {
-		// Return mock rules
-		mockRules := `Chain INPUT (policy DROP)
-num  target     prot opt source               destination
-1    ACCEPT     all  --  0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED
-2    ACCEPT     udp  --  0.0.0.0/0            0.0.0.0/0            udp dpt:51820
-3    ACCEPT     all  --  0.0.0.0/0            0.0.0.0/0            /* wg0 */
-4    DROP       all  --  0.0.0.0/0            0.0.0.0/0            ctstate INVALID
-
-Chain FORWARD (policy DROP)
-num  target     prot opt source               destination
-1    ACCEPT     all  --  10.200.0.0/24        0.0.0.0/0
-2    ACCEPT     all  --  0.0.0.0/0            10.200.0.0/24        state RELATED,ESTABLISHED
-
-Chain OUTPUT (policy ACCEPT)`
-		return c.JSON(fiber.Map{
-			"mock":  true,
-			"rules": mockRules,
-		})
-	}
-
-	// Real execution
+	// Real execution only
 	output, err := h.Firewall.Executor.Execute("iptables", "-L", "-n", "-v", "--line-numbers")
 	if err != nil {
 		system.Error("Failed to get firewall status: %v", err)

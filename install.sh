@@ -43,9 +43,30 @@ if [ ! -d "frontend" ]; then
     exit 1
 fi
 
-# 3. Stop Service if running
-echo -e "${GREEN}[1/7] Stopping existing service...${NC}"
+# 3. Aggressive Cleanup
+echo -e "${GREEN}[1/7] Cleaning up old installation...${NC}"
+
+# Stop service
 systemctl stop kg-proxy 2>/dev/null || true
+systemctl disable kg-proxy 2>/dev/null || true
+
+# Kill processes aggressively
+pkill -9 kg-proxy-backend 2>/dev/null || true
+pkill -9 kg-proxy 2>/dev/null || true
+
+# Wait for process death
+sleep 2
+
+# Force remove OLD directories (Clean slate)
+rm -rf $INSTALL_DIR/frontend
+rm -rf $INSTALL_DIR/ebpf
+rm -f $INSTALL_DIR/kg-proxy-backend
+
+# Clean eBPF maps (Important for re-loading)
+echo "Cleaning eBPF maps..."
+rm -rf /sys/fs/bpf/kg-proxy
+rm -rf /sys/fs/bpf/xdp_filter
+ip link set dev eth0 xdp off 2>/dev/null || true
 
 # 4. Install Dependencies
 echo -e "${GREEN}[2/7] Installing system dependencies...${NC}"
@@ -53,17 +74,18 @@ apt-get update -qq
 # Ensure GCC and Make make avail for eBPF 
 apt-get install -y -qq wireguard iptables ipset wireguard-tools clang llvm libbpf-dev linux-headers-$(uname -r) make gcc gcc-multilib
 
-# 5. Build eBPF
+# 5. Build eBPF (Try to build, fallback to pre-compiled if present)
 echo -e "${GREEN}[3/7] Building eBPF XDP filter...${NC}"
 if [ -f "backend/ebpf/xdp_filter.c" ]; then
     if [ -f "build-ebpf.sh" ]; then
         chmod +x build-ebpf.sh
-        ./build-ebpf.sh || echo -e "${RED}Warning: eBPF build failed. Simulation mode will be used.${NC}"
+        # If build fails, we exit because we removed simulation mode
+        ./build-ebpf.sh || { echo -e "${RED}eBPF Build Failed! Stopping install.${NC}"; exit 1; }
     else
         echo "build-ebpf.sh not found, skipping build."
     fi
 else
-    echo "Note: eBPF source not found. Assuming pre-compiled or simulation mode."
+    echo "Note: eBPF source not found. Assuming pre-compiled objects exist."
 fi
 
 # 6. Setup Directories & Copy Files
@@ -85,6 +107,13 @@ if [ -d "backend/ebpf" ]; then
 fi
 
 chmod +x $INSTALL_DIR/kg-proxy-backend
+
+# Fix permissions for astral user (if exists) so they can fix things later
+if id "astral" &>/dev/null; then
+    echo "Setting ownership for user 'astral' to allow easier management..."
+    chown -R astral:astral $INSTALL_DIR
+    chown -R astral:astral $DATA_DIR
+fi
 
 # 6. Configure System Hardening (Sysctl)
 echo -e "${GREEN}[4/7] Applying system hardening defaults...${NC}"
