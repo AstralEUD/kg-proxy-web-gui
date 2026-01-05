@@ -266,16 +266,17 @@ func (e *EBPFService) readEBPFMaps() {
 	// Clear old data
 	e.trafficData = make([]TrafficEntry, 0)
 
-	// Iterate over ip_stats map
-	var (
-		key   uint32
-		value PacketStats
-	)
+	// Iterate over the map
+	// Use [4]byte for key to parse IP correctly regardless of host endianness
+	var key [4]byte
+	var value PacketStats
 
+	// We need to lock while iterating if we were modifying, but here we just read.
+	// BPF map iteration is generally safe.
 	iter := objs.IpStats.Iterate()
 	for iter.Next(&key, &value) {
-		// Convert IP (Big Endian to matching IP)
-		ip := uint32ToIP(key)
+		// Convert key bytes directly to IP
+		ip := net.IPv4(key[0], key[1], key[2], key[3])
 
 		// Get country code
 		countryCode := "XX"

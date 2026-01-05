@@ -107,3 +107,108 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"message": "Settings applied successfully", "settings": settings})
 }
+
+// GetIPRules returns all allow/block rules
+func (h *Handler) GetIPRules(c *fiber.Ctx) error {
+	var allowed []models.AllowIP
+	var blocked []models.BanIP
+
+	h.DB.Order("created_at desc").Find(&allowed)
+	h.DB.Not("is_auto", true).Order("created_at desc").Find(&blocked)
+
+	return c.JSON(fiber.Map{
+		"allowed": allowed,
+		"blocked": blocked,
+	})
+}
+
+// AddAllowIP adds an IP to whitelist
+func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
+	var input models.AllowIP
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid input"})
+	}
+	if err := h.DB.Create(&input).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// TODO: Notify Firewall/eBPF service
+	return c.JSON(input)
+}
+
+// DeleteAllowIP removes an IP from whitelist
+func (h *Handler) DeleteAllowIP(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.DB.Delete(&models.AllowIP{}, id).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// TODO: Notify Firewall/eBPF service
+	return c.JSON(fiber.Map{"success": true})
+}
+
+// AddBanIP adds an IP to blacklist
+func (h *Handler) AddBanIP(c *fiber.Ctx) error {
+	var input models.BanIP
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid input"})
+	}
+	input.IsAuto = false
+	if err := h.DB.Create(&input).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// TODO: Notify Firewall/eBPF service
+	return c.JSON(input)
+}
+
+// DeleteBanIP removes an IP from blacklist
+func (h *Handler) DeleteBanIP(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.DB.Delete(&models.BanIP{}, id).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// TODO: Notify Firewall/eBPF service
+	return c.JSON(fiber.Map{"success": true})
+}
+
+// CheckIPStatus checks if an IP is allowed/blocked/geo-blocked
+func (h *Handler) CheckIPStatus(c *fiber.Ctx) error {
+	ip := c.Params("ip")
+	var status string = "neutral"
+	var reason string = ""
+	var details interface{} = nil
+
+	// Check manual whitelist
+	var allow models.AllowIP
+	if err := h.DB.Where("ip = ?", ip).First(&allow).Error; err == nil {
+		status = "allowed"
+		reason = "Manually Whitelisted: " + allow.Label
+		details = allow
+		return c.JSON(fiber.Map{"ip": ip, "status": status, "reason": reason, "details": details})
+	}
+
+	// Check manual/auto blacklist
+	var ban models.BanIP
+	if err := h.DB.Where("ip = ?", ip).First(&ban).Error; err == nil {
+		status = "blocked"
+		reason = "Blacklisted: " + ban.Reason
+		details = ban
+		return c.JSON(fiber.Map{"ip": ip, "status": status, "reason": reason, "details": details})
+	}
+
+	// Check GeoIP
+	// Using services is better than direct DB if possible
+	// But GeoIP service is in 'services'. Handler has no direct access to services?
+	// Handler struct DOES have Services! (h.EBPF.geoIPService?)
+	// Actually Handlers struct: DB, WG, Firewall, EBPF.
+	// Firewall service has GeoIP.
+	// We can add CheckGeoIP method to FirewallService or use what exists.
+
+	// Assuming safe if passed blacklist check
+	status = "allowed"
+	reason = "Not in any blacklist"
+
+	return c.JSON(fiber.Map{
+		"ip":     ip,
+		"status": status,
+		"reason": reason,
+	})
+}

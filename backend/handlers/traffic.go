@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"kg-proxy-web-gui/backend/services"
 	"net/http"
 
@@ -60,11 +61,11 @@ func getStatus(blocked bool) string {
 
 func formatBytes(bytes int64) string {
 	if bytes < 1024 {
-		return "< 1 KB"
+		return fmt.Sprintf("%d B", bytes)
 	} else if bytes < 1024*1024 {
-		return string(rune(bytes/1024)) + " KB"
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024.0)
 	} else {
-		return string(rune(bytes/(1024*1024))) + " MB"
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024.0*1024.0))
 	}
 }
 

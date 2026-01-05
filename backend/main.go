@@ -45,7 +45,7 @@ func main() {
 	// Migrate
 	// Migrate
 	// CRITICAL: Ensure schema is up to date. Panic if migration fails.
-	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.AllowForeign{}, &models.BanIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
+	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.AllowForeign{}, &models.BanIP{}, &models.AllowIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
 		system.Error("Database migration failed: %v", err)
 		log.Fatalf("CRITICAL: Database migration failed. Application cannot start: %v", err)
 	}
@@ -148,6 +148,14 @@ func main() {
 	// Security Settings
 	protected.Get("/security/settings", h.GetSecuritySettings)
 	protected.Put("/security/settings", h.UpdateSecuritySettings)
+
+	// IP Rules (Custom Whitelist/Blacklist)
+	protected.Get("/security/rules", h.GetIPRules)
+	protected.Post("/security/rules/allow", h.AddAllowIP)
+	protected.Delete("/security/rules/allow/:id", h.DeleteAllowIP)
+	protected.Post("/security/rules/block", h.AddBanIP)
+	protected.Delete("/security/rules/block/:id", h.DeleteBanIP)
+	protected.Get("/security/check/:ip", h.CheckIPStatus)
 
 	// Traffic Data (eBPF)
 	protected.Get("/traffic/data", h.GetTrafficData)

@@ -106,6 +106,7 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 	sb.WriteString("create allow_foreign hash:ip family inet -exist\n")
 	sb.WriteString("create ban hash:ip family inet -exist\n")
 	sb.WriteString("create flood_blocked hash:ip family inet timeout 1800 -exist\n")
+	sb.WriteString("create white_list hash:ip family inet -exist\n")
 
 	// Flush existing entries
 	sb.WriteString("flush geo_allowed\n")
@@ -114,6 +115,7 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 	sb.WriteString("flush allow_foreign\n")
 	sb.WriteString("flush ban\n")
 	sb.WriteString("flush flood_blocked\n")
+	sb.WriteString("flush white_list\n")
 
 	// Add GeoIP allowed countries
 	if s.GeoIP != nil {
@@ -145,6 +147,13 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 		for _, torIP := range s.GeoIP.torExitNodes {
 			sb.WriteString(fmt.Sprintf("add tor_exits %s\n", torIP.String()))
 		}
+	}
+
+	// Add manually allowed IP rules (white_list)
+	var allowIPs []models.AllowIP
+	s.DB.Find(&allowIPs)
+	for _, a := range allowIPs {
+		sb.WriteString(fmt.Sprintf("add white_list %s\n", a.IP))
 	}
 
 	// Add manually allowed foreign IPs
@@ -266,6 +275,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A GEO_GUARD -s 172.16.0.0/12 -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -s 127.0.0.0/8 -j RETURN\n")
 
+	sb.WriteString("-A GEO_GUARD -m set --match-set white_list src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set ban src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")

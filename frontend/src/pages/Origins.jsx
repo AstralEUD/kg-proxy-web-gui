@@ -5,7 +5,7 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions, TextField,
     Stepper, Step, StepLabel, Paper, IconButton, Tooltip, Chip
 } from '@mui/material';
-import { Add as AddIcon, CloudQueue, Download, QrCode2, ContentCopy, Delete, CheckCircle } from '@mui/icons-material';
+import { Add as AddIcon, CloudQueue, Download, ContentCopy, Delete, CheckCircle, Edit as EditIcon } from '@mui/icons-material';
 import QRCode from 'react-qr-code';
 import client from '../api/client';
 
@@ -19,23 +19,39 @@ const getNextOriginName = (origins) => {
 };
 
 const generateWgConfig = (origin, peerInfo, serverInfo) => {
+    // Priority: Backend provided endpoint > Server Public IP
+    const endpoint = peerInfo?.endpoint || `${serverInfo?.public_ip || '<VPS_IP>'}:${serverInfo?.wireguard_port || 51820}`;
+    const allowedIPs = peerInfo?.allowed_ips || '10.200.0.0/24, 10.99.0.0/24';
+
     return `[Interface]
 Address = ${origin?.wg_ip || '10.200.0.2'}/32
 PrivateKey = ${peerInfo?.private_key || '<PRIVATE_KEY_HIDDEN>'}
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = ${serverInfo?.wireguard_public_key || '<VPS_PUBLIC_KEY>'}
-Endpoint = ${serverInfo?.public_ip || '<VPS_IP>'}:${serverInfo?.wireguard_port || 51820}
-AllowedIPs = 10.200.0.0/24, 10.99.0.0/24
+PublicKey = ${peerInfo?.public_key || serverInfo?.wireguard_public_key || '<VPS_PUBLIC_KEY>'}
+Endpoint = ${endpoint}
+AllowedIPs = ${allowedIPs}
 PersistentKeepalive = 25`;
 };
 
 export default function Origins() {
     const [open, setOpen] = useState(false);
+    const [editMode, setEditMode] = useState(false);
+    const [editId, setEditId] = useState(null);
     const [activeStep, setActiveStep] = useState(0);
     const [createdOrigin, setCreatedOrigin] = useState(null);
     const [copied, setCopied] = useState(false);
+
+    // Form state for editing
+    const [formData, setFormData] = useState({
+        name: '',
+        wg_ip: '',
+        reforger_game_port: 20001,
+        reforger_browser_port: 17777,
+        reforger_a2s_port: 27016
+    });
+
     const queryClient = useQueryClient();
 
     const { data: serverInfo } = useQuery({
@@ -67,8 +83,22 @@ export default function Origins() {
             setActiveStep(1);
         },
         onError: (error) => {
-            console.error('Failed to create origin:', error);
-            alert(`Failed to create origin: ${error.response?.data?.error || error.message || 'Unknown error'}`);
+            alert(`Failed to create origin: ${error.response?.data?.error || error.message}`);
+        },
+    });
+
+    const updateMutation = useMutation({
+        mutationFn: ({ id, data }) => client.put(`/origins/${id}`, data),
+        onSuccess: (response) => {
+            queryClient.invalidateQueries(['origins']);
+            setCreatedOrigin({
+                origin: response.data.origin,
+                wg_config: response.data.wg_config,
+            });
+            setActiveStep(1); // Go to config view to show updated AllowedIPs
+        },
+        onError: (error) => {
+            alert(`Failed to update origin: ${error.response?.data?.error || error.message}`);
         },
     });
 
@@ -77,23 +107,46 @@ export default function Origins() {
         onSuccess: () => queryClient.invalidateQueries(['origins']),
     });
 
-    const handleCreate = () => {
-        const name = getNextOriginName(origins);
-        // Find first available IP suffix
-        const usedSuffixes = origins?.map(o => parseInt(o.wg_ip.split('.')[3])) || [];
-        let nextSuffix = 2;
-        while (usedSuffixes.includes(nextSuffix)) {
-            nextSuffix++;
+    const handleOpenCreate = () => {
+        setEditMode(false);
+        setEditId(null);
+        setActiveStep(0);
+        setOpen(true);
+    };
+
+    const handleOpenEdit = (origin) => {
+        setEditMode(true);
+        setEditId(origin.id);
+        setFormData({
+            name: origin.name,
+            wg_ip: origin.wg_ip,
+            reforger_game_port: origin.reforger_game_port || 20001,
+            reforger_browser_port: origin.reforger_browser_port || 17777,
+            reforger_a2s_port: origin.reforger_a2s_port || 27016
+        });
+        setActiveStep(0);
+        setOpen(true);
+    };
+
+    const handleSubmit = () => {
+        if (editMode) {
+            updateMutation.mutate({ id: editId, data: formData });
+        } else {
+            // Auto generate for create
+            const name = getNextOriginName(origins);
+            const usedSuffixes = origins?.map(o => parseInt(o.wg_ip.split('.')[3])) || [];
+            let nextSuffix = 2;
+            while (usedSuffixes.includes(nextSuffix)) {
+                nextSuffix++;
+            }
+            const wgIp = `10.200.0.${nextSuffix}`;
+            createMutation.mutate({ name, wg_ip: wgIp });
         }
-        const wgIp = `10.200.0.${nextSuffix}`;
-        createMutation.mutate({ name, wg_ip: wgIp });
     };
 
     const handleDownload = (originData = null) => {
         const target = originData || createdOrigin;
         if (!target) return;
-
-        // Use hidden key if not available (list view)
         const config = generateWgConfig(target.origin, target.wg_config || {}, serverInfo);
         const blob = new Blob([config], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
@@ -131,7 +184,7 @@ export default function Origins() {
                     variant="contained"
                     size="small"
                     startIcon={<AddIcon />}
-                    onClick={() => setOpen(true)}
+                    onClick={handleOpenCreate}
                     sx={{
                         background: 'linear-gradient(45deg, #00e5ff, #00b8d4)',
                         color: '#000',
@@ -149,7 +202,7 @@ export default function Origins() {
                     <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                         Create your first Origin server to start routing traffic.
                     </Typography>
-                    <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setOpen(true)}>
+                    <Button variant="outlined" startIcon={<AddIcon />} onClick={handleOpenCreate}>
                         Create Origin
                     </Button>
                 </Box>
@@ -173,21 +226,34 @@ export default function Origins() {
                                             sx={{ ml: 'auto', bgcolor: '#00c85320', color: '#00c853', height: 20, fontSize: 10 }}
                                         />
                                     </Box>
-                                    <Typography variant="caption" color="textSecondary">
+                                    <Typography variant="caption" color="textSecondary" display="block">
                                         WireGuard IP: <code style={{ color: '#00e5ff' }}>{origin.wg_ip || 'N/A'}</code>
+                                    </Typography>
+                                    <Typography variant="caption" color="textSecondary">
+                                        Ports: {origin.reforger_game_port}/{origin.reforger_browser_port}/{origin.reforger_a2s_port}
                                     </Typography>
                                 </CardContent>
                                 <CardActions sx={{ borderTop: '1px solid #1a1a1a', px: 2, py: 1 }}>
-                                    {/* Note: In list view, we don't have the private key, so these are just placeholders or need different logic */}
-                                    <Tooltip title="Delete">
-                                        <IconButton
-                                            size="small"
-                                            sx={{ color: '#888', ml: 'auto', '&:hover': { color: '#f50057' } }}
-                                            onClick={() => deleteMutation.mutate(origin.id)}
-                                        >
-                                            <Delete fontSize="small" />
-                                        </IconButton>
-                                    </Tooltip>
+                                    <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+                                        <Tooltip title="Edit">
+                                            <IconButton
+                                                size="small"
+                                                sx={{ color: '#888', '&:hover': { color: '#00e5ff' } }}
+                                                onClick={() => handleOpenEdit(origin)}
+                                            >
+                                                <EditIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                        <Tooltip title="Delete">
+                                            <IconButton
+                                                size="small"
+                                                sx={{ color: '#888', '&:hover': { color: '#f50057' } }}
+                                                onClick={() => deleteMutation.mutate(origin.id)}
+                                            >
+                                                <Delete fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    </Box>
                                 </CardActions>
                             </Card>
                         </Grid>
@@ -197,28 +263,88 @@ export default function Origins() {
 
             {/* Dialog */}
             <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
-                <DialogTitle sx={{ color: '#00e5ff', pb: 1 }}>⚡ One-Click Origin Setup</DialogTitle>
+                <DialogTitle sx={{ color: '#00e5ff', pb: 1 }}>
+                    {editMode ? 'Edit Origin Server' : '⚡ One-Click Origin Setup'}
+                </DialogTitle>
                 <DialogContent>
                     <Stepper activeStep={activeStep} sx={{ mb: 3, pt: 1 }}>
-                        <Step><StepLabel>Create</StepLabel></Step>
-                        <Step><StepLabel>Get Config</StepLabel></Step>
+                        <Step><StepLabel sx={{ '& .MuiStepLabel-label': { color: '#888' }, '& .Mui-active': { color: '#00e5ff' } }}>{editMode ? 'Edit' : 'Create'}</StepLabel></Step>
+                        <Step><StepLabel sx={{ '& .MuiStepLabel-label': { color: '#888' }, '& .Mui-active': { color: '#00e5ff' } }}>Get Config</StepLabel></Step>
                     </Stepper>
 
                     {activeStep === 0 ? (
                         <Box sx={{ textAlign: 'center', py: 2 }}>
-                            <CloudQueue sx={{ fontSize: 60, color: '#00e5ff', mb: 2 }} />
-                            <Typography variant="body1" gutterBottom>Ready to create a new Origin?</Typography>
-                            <Typography variant="caption" color="textSecondary">
-                                Name and IP ({serverInfo?.public_ip || 'Loading...'}) will be auto-assigned.
-                            </Typography>
+                            {!editMode && <CloudQueue sx={{ fontSize: 60, color: '#00e5ff', mb: 2 }} />}
+
+                            {editMode ? (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                                    <TextField
+                                        label="Name"
+                                        size="small"
+                                        value={formData.name}
+                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                        sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                    />
+                                    <TextField
+                                        label="WireGuard IP (Internal)"
+                                        size="small"
+                                        value={formData.wg_ip}
+                                        onChange={(e) => setFormData({ ...formData, wg_ip: e.target.value })}
+                                        sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                    />
+                                    <Typography variant="caption" color="textSecondary" sx={{ textAlign: 'left' }}>
+                                        Modify ports only if you know what you are doing. Reforger default ports shown.
+                                    </Typography>
+                                    <Grid container spacing={2}>
+                                        <Grid item xs={4}>
+                                            <TextField
+                                                label="Game Port"
+                                                size="small"
+                                                type="number"
+                                                value={formData.reforger_game_port}
+                                                onChange={(e) => setFormData({ ...formData, reforger_game_port: parseInt(e.target.value) })}
+                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={4}>
+                                            <TextField
+                                                label="Browser Port"
+                                                size="small"
+                                                type="number"
+                                                value={formData.reforger_browser_port}
+                                                onChange={(e) => setFormData({ ...formData, reforger_browser_port: parseInt(e.target.value) })}
+                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={4}>
+                                            <TextField
+                                                label="Query Port"
+                                                size="small"
+                                                type="number"
+                                                value={formData.reforger_a2s_port}
+                                                onChange={(e) => setFormData({ ...formData, reforger_a2s_port: parseInt(e.target.value) })}
+                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Box>
+                            ) : (
+                                <>
+                                    <Typography variant="body1" gutterBottom>Ready to create a new Origin?</Typography>
+                                    <Typography variant="caption" color="textSecondary">
+                                        Name and IP ({serverInfo?.public_ip || 'Loading...'}) will be auto-assigned.
+                                    </Typography>
+                                </>
+                            )}
+
                             <Box sx={{ mt: 3 }}>
                                 <Button
                                     variant="contained"
-                                    onClick={handleCreate}
-                                    disabled={createMutation.isPending || !serverInfo}
+                                    onClick={handleSubmit}
+                                    disabled={createMutation.isPending || updateMutation.isPending || !serverInfo}
                                     sx={{ background: 'linear-gradient(45deg, #00e5ff, #00b8d4)', color: '#000', fontWeight: 'bold' }}
                                 >
-                                    {createMutation.isPending ? 'Creating...' : 'Create Now'}
+                                    {createMutation.isPending || updateMutation.isPending ? 'Processing...' : (editMode ? 'Save Changes' : 'Create Now')}
                                 </Button>
                             </Box>
                         </Box>
@@ -227,7 +353,7 @@ export default function Origins() {
                             <Box sx={{ textAlign: 'center', mb: 2 }}>
                                 <CheckCircle sx={{ fontSize: 48, color: '#00c853', mb: 1 }} />
                                 <Typography variant="subtitle1" color="success.main">
-                                    {createdOrigin?.origin?.name} Created!
+                                    {createdOrigin?.origin?.name} {editMode ? 'Updated!' : 'Created!'}
                                 </Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2, p: 2, bgcolor: '#fff', borderRadius: 1 }}>
@@ -248,7 +374,7 @@ export default function Origins() {
                     )}
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={handleClose} size="small">{activeStep === 1 ? 'Done' : 'Cancel'}</Button>
+                    <Button onClick={handleClose} size="small" sx={{ color: '#888' }}>{activeStep === 1 ? 'Done' : 'Cancel'}</Button>
                 </DialogActions>
             </Dialog>
         </Box>
