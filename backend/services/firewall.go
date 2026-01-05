@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
+	"os"
 	"strings"
 
 	"gorm.io/gorm"
@@ -362,8 +363,5 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 }
 
 func (s *FirewallService) saveRulesToFile(path, content string) error {
-	// In production, write to file using os.WriteFile
-	// s.Executor.Execute("sh", "-c", fmt.Sprintf("cat <<EOF > %s\n%s\nEOF", path, content))
-	system.Info("[Simulated] Writing rules to %s", path)
-	return nil
+	return os.WriteFile(path, []byte(content), 0644)
 }
