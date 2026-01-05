@@ -3,9 +3,11 @@ package services
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
+	"net"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -107,11 +109,142 @@ func (s *WireGuardService) generateKeyWithGo() (string, string, error) {
 	return privKeyStr, pubKeyStr, nil
 }
 
-// GenerateAllowedIPs excludes specific subnets from 0.0.0.0/0
-func (s *WireGuardService) GenerateAllowedIPs(vpsIP, originLan string) (string, error) {
-	// For now, return full routing
-	// In production, this should exclude VPS IP and Origin LAN
-	return "0.0.0.0/0, ::/0", nil
+// GenerateAllowedIPs calculates the AllowedIPs list by excluding VPS IP and private ranges from 0.0.0.0/0
+func (s *WireGuardService) GenerateAllowedIPs(vpsIP string, originLan string) (string, error) {
+	// Base: All IPv4
+	allowed := []string{"0.0.0.0/0"}
+
+	// Exclusions
+	exclusions := []string{
+		"10.0.0.0/8",     // Private A
+		"172.16.0.0/12",  // Private B
+		"192.168.0.0/16", // Private C
+	}
+
+	// Add VPS IP (as /32)
+	if vpsIP != "" && vpsIP != "0.0.0.0" {
+		// Ensure it's just IP
+		ip := net.ParseIP(vpsIP)
+		if ip != nil {
+			exclusions = append(exclusions, ip.String()+"/32")
+		}
+	}
+
+	// Add Origin LAN if provided
+	if originLan != "" {
+		exclusions = append(exclusions, originLan)
+	}
+
+	// Process exclusions
+	for _, exclude := range exclusions {
+		var newAllowed []string
+		for _, base := range allowed {
+			subtracted := excludeNetwork(base, exclude)
+			newAllowed = append(newAllowed, subtracted...)
+		}
+		allowed = newAllowed
+	}
+
+	// Combine into string
+	return strings.Join(allowed, ", "), nil
+}
+
+// excludeNetwork subtracts 'exclude' CIDR from 'base' CIDR
+// Returns a list of CIDRs covering (base - exclude)
+func excludeNetwork(baseStr, excludeStr string) []string {
+	_, base, err := net.ParseCIDR(baseStr)
+	if err != nil {
+		return []string{baseStr} // Keep if invalid
+	}
+	_, exclude, err := net.ParseCIDR(excludeStr)
+	if err != nil {
+		return []string{baseStr}
+	}
+
+	// Case 1: No overlap -> Return base
+	if !networksOverlap(base, exclude) {
+		return []string{baseStr}
+	}
+
+	// Case 2: Base is inside Exclude -> Remove strictly (Return empty)
+	if networkContains(exclude, base) {
+		// Special case: if base == exclude, it's removed
+		return []string{}
+	}
+
+	// Case 3: Exclude is inside Base (or partial overlap being handled by recursion)
+	// We need to split Base until Exclude is isolated
+
+	// If base matches exclude exactly, return empty
+	if base.String() == exclude.String() {
+		return []string{}
+	}
+
+	// Split base into two halves
+	ones, _ := base.Mask.Size()
+	if ones >= 32 {
+		// Cannot split /32 further. If we are here, it means overlap logic failed or it IS the excluded IP
+		return []string{}
+	}
+
+	// Left: same IP, prefix+1
+	// Right: IP + 2^(32-(prefix+1)), prefix+1
+
+	prefix := ones + 1
+
+	// Left child
+	leftIP := base.IP
+	leftCIDR := fmt.Sprintf("%s/%d", leftIP.String(), prefix)
+
+	// Right child
+	// Calculate offset
+	mask := net.CIDRMask(prefix, 32)
+	ipInt := ipToUint32(leftIP)
+	// Add 1 at the bit position of the new prefix?
+	// Actually, size of the new block is 2^(32-prefix)
+	// e.g., /0 -> /1. Left 0.0.0.0/1. Right 128.0.0.0/1
+	// 0.0.0.0 = 0. 128.0.0.0 = 1 << 31.
+
+	size := uint32(1) << (32 - prefix)
+	rightIPInt := ipInt + size
+	rightIP := uint32ToIP(rightIPInt)
+	rightCIDR := fmt.Sprintf("%s/%d", rightIP.String(), prefix)
+
+	// Recurse
+	result := []string{}
+	result = append(result, excludeNetwork(leftCIDR, excludeStr)...)
+	result = append(result, excludeNetwork(rightCIDR, excludeStr)...)
+
+	return result
+}
+
+// Helper: Check if networks overlap
+func networksOverlap(n1, n2 *net.IPNet) bool {
+	return n1.Contains(n2.IP) || n2.Contains(n1.IP)
+}
+
+// Helper: Check if n1 contains n2 fully
+func networkContains(n1, n2 *net.IPNet) bool {
+	// n1 contains n2 if n1 contains n2.IP and n1 mask size <= n2 mask size
+	s1, _ := n1.Mask.Size()
+	s2, _ := n2.Mask.Size()
+	return s1 <= s2 && n1.Contains(n2.IP)
+}
+
+// Helper: Reusing ipToUint32 from ebpf.go if possible, but package separation.
+// Implementing local helpers for WireGuard service
+func ipToUint32(ip net.IP) uint32 {
+	ip = ip.To4()
+	if ip == nil {
+		return 0
+	}
+	return binary.BigEndian.Uint32(ip)
+}
+
+func uint32ToIP(n uint32) net.IP {
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, n)
+	return ip
 }
 
 func (s *WireGuardService) generateClientConfig(peer *models.WireGuardPeer, vpsIP string) string {

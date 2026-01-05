@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
 
@@ -60,11 +61,65 @@ func (h *Handler) CreateOrigin(c *fiber.Ctx) error {
 	}
 	tx.Commit()
 
+	// Calculate AllowedIPs
+	sysInfo := services.NewSysInfoService()
+	vpsIP := sysInfo.GetPublicIP()
+	allowedIPs, _ := h.WG.GenerateAllowedIPs(vpsIP, "10.0.0.0/8") // Assuming internal network
+
+	// Endpoint
+	endpoint := fmt.Sprintf("%s:51820", vpsIP)
+
 	return c.Status(201).JSON(fiber.Map{
 		"origin": origin,
 		"wg_config": fiber.Map{
 			"private_key": priv,
 			"public_key":  pub,
+			"allowed_ips": allowedIPs,
+			"endpoint":    endpoint,
+		},
+	})
+}
+
+// UpdateOrigin - Update existing origin
+func (h *Handler) UpdateOrigin(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var origin models.Origin
+	if err := h.DB.First(&origin, id).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "Origin not found"})
+	}
+
+	var input models.Origin
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid input"})
+	}
+
+	origin.Name = input.Name
+	origin.WgIP = input.WgIP
+	origin.ReforgerGamePort = input.ReforgerGamePort
+	origin.ReforgerBrowserPort = input.ReforgerBrowserPort
+	origin.ReforgerA2SPort = input.ReforgerA2SPort
+
+	if err := h.DB.Save(&origin).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Also fetch peer to return config info if needed
+	var peer models.WireGuardPeer
+	h.DB.Where("origin_id = ?", origin.ID).First(&peer)
+
+	// Calculate AllowedIPs (Recalculate in case they want to update client config)
+	sysInfo := services.NewSysInfoService()
+	vpsIP := sysInfo.GetPublicIP()
+	allowedIPs, _ := h.WG.GenerateAllowedIPs(vpsIP, "10.0.0.0/8")
+	endpoint := fmt.Sprintf("%s:51820", vpsIP)
+
+	return c.JSON(fiber.Map{
+		"origin": origin,
+		"wg_config": fiber.Map{
+			"private_key": peer.PrivateKey,
+			"public_key":  peer.PublicKey,
+			"allowed_ips": allowedIPs,
+			"endpoint":    endpoint,
 		},
 	})
 }

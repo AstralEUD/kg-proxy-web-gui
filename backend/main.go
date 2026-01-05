@@ -121,6 +121,7 @@ func main() {
 	// Origins
 	protected.Get("/origins", h.GetOrigins)
 	protected.Post("/origins", h.CreateOrigin)
+	protected.Put("/origins/:id", h.UpdateOrigin)
 	protected.Delete("/origins/:id", h.DeleteOrigin)
 
 	// Firewall
