@@ -68,8 +68,11 @@ func main() {
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
 
 	// Always try to enable eBPF XDP monitoring
+	// CRITICAL: Fail if eBPF cannot be loaded
 	if err := ebpfService.Enable(); err != nil {
-		system.Warn("eBPF XDP monitoring failed to start: %v (falling back to simulation)", err)
+		system.Error("Failed to enable eBPF service: %v", err)
+		// Need to crash explicitly so the user knows it failed (no silent failure)
+		log.Fatalf("CRITICAL: eBPF initialization failed. Application cannot start: %v", err)
 	} else {
 		system.Info("eBPF XDP monitoring enabled successfully")
 	}

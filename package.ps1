@@ -83,58 +83,126 @@ if [ ! -f "release.tar.gz" ]; then
 fi
 sleep 1
 
-# 2. Install Dependencies
-show_progress 30 "Installing dependencies(apt)..."
-# Suppress output unless error
-apt-get update -qq >/dev/null 2>&1
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard iptables ipset wireguard-tools curl >/dev/null 2>&1
+# 2. Aggressive Cleanup
+show_progress 20 "Cleaning up old installation..."
 
-# 3. Setup Directories
-show_progress 50 "Configuring directories..."
-# Cleanup old version
+# Stop service
 systemctl stop kg-proxy 2>/dev/null || true
-rm -rf /opt/kg-proxy
-mkdir -p /opt/kg-proxy/frontend
+systemctl disable kg-proxy 2>/dev/null || true
 
-# 4. Extract Files
+# Kill processes aggressively
+pkill -9 kg-proxy-backend 2>/dev/null || true
+pkill -9 kg-proxy 2>/dev/null || true
+
+# Wait for process death
+sleep 2
+
+# Force remove OLD directories (Clean slate)
+rm -rf /opt/kg-proxy/frontend
+rm -rf /opt/kg-proxy/ebpf
+rm -f /opt/kg-proxy/kg-proxy-backend
+
+# Clean eBPF maps (Important for re-loading)
+echo "Cleaning eBPF maps..."
+rm -rf /sys/fs/bpf/kg-proxy
+rm -rf /sys/fs/bpf/xdp_filter
+ip link set dev eth0 xdp off 2>/dev/null || true
+
+# 3. Install Dependencies
+show_progress 40 "Installing dependencies(apt)..."
+apt-get update -qq >/dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard iptables ipset wireguard-tools curl clang llvm libbpf-dev linux-headers-\$(uname -r) make gcc gcc-multilib >/dev/null 2>&1
+
+# 4. Build eBPF
+show_progress 50 "Building eBPF..."
+if [ -f "backend/ebpf/xdp_filter.c" ]; then
+    if [ -f "build-ebpf.sh" ]; then
+        chmod +x build-ebpf.sh
+        # If build fails, we exit because we removed simulation mode
+        ./build-ebpf.sh || { echo -e "\${RED}eBPF Build Failed! Stopping install.\${NC}"; exit 1; }
+    else
+        echo "build-ebpf.sh not found, skipping build."
+    fi
+else
+    echo "Note: eBPF source not found. Assuming pre-compiled objects exist."
+fi
+
+# 5. Setup Directories & Copy Files
+show_progress 60 "Deploying files..."
+INSTALL_DIR="/opt/kg-proxy"
+DATA_DIR="/var/lib/kg-proxy"
+
+mkdir -p \$INSTALL_DIR/frontend
+mkdir -p \$INSTALL_DIR/ebpf
+mkdir -p \$DATA_DIR
+
+# Extract
 show_progress 70 "Extracting build artifacts..."
 tar -xzf release.tar.gz -C /opt/kg-proxy/
 
-# Move binary to root of /opt/kg-proxy if it was inside a structure
-# (Handling the case if tar structure varies, but package.ps1 keeps it flat-ish)
-# Ensure binary is executable
-chmod +x /opt/kg-proxy/kg-proxy-backend
+# Ensure permissions
+chmod +x \$INSTALL_DIR/kg-proxy-backend
 
-# 5. Service Setup
-show_progress 85 "Registering Systemd service..."
+# Fix permissions for astral user so they can fix things later
+if id "astral" &>/dev/null; then
+    echo "Setting ownership for user 'astral' to allow easier management..."
+    chown -R astral:astral \$INSTALL_DIR
+    chown -R astral:astral \$DATA_DIR
+fi
+
+# 6. Configure System Hardening (Sysctl)
+show_progress 80 "Applying system hardening..."
+cat > /etc/sysctl.d/99-kg-proxy-hardening.conf <<EOF
+# KG-Proxy Base Hardening
+net.ipv4.ip_forward = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.core.bpf_jit_enable = 1
+EOF
+sysctl --system > /dev/null 2>&1 || true
+
+# 7. Create Systemd Service
+show_progress 85 "Configuring systemd service..."
 cat > /etc/systemd/system/kg-proxy.service <<EOF
 [Unit]
 Description=KG-Proxy Web GUI Backend
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/kg-proxy
-ExecStart=/opt/kg-proxy/kg-proxy-backend
+WorkingDirectory=\$INSTALL_DIR
+ExecStart=\$INSTALL_DIR/kg-proxy-backend
 Restart=always
 RestartSec=5
 User=root
 Environment=GIN_MODE=release
+Environment=KG_DATA_DIR=\$DATA_DIR
+LimitNOFILE=65535
+StartLimitInterval=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+# 8. Enable & Start
 systemctl daemon-reload
 systemctl enable kg-proxy >/dev/null 2>&1
+systemctl stop kg-proxy 2>/dev/null || true
 systemctl start kg-proxy
 
-# 6. Firewall
 show_progress 95 "Opening Firewall ports..."
 iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
 iptables -A INPUT -p udp --dport 51820 -j ACCEPT
 if dpkg -l | grep -q iptables-persistent; then
     netfilter-persistent save >/dev/null 2>&1
+fi
+
+# 9. Restore Ownership (Fix for SFTP/Uploads)
+if [ -n "\$SUDO_USER" ]; then
+    echo -e "\${GREEN}[Post-Install] Restoring directory ownership to \$SUDO_USER...\${NC}"
+    chown -R \$SUDO_USER:\$(id -gn \$SUDO_USER) .
 fi
 
 show_progress 100 "Done!"

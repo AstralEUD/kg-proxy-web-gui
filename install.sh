@@ -200,6 +200,12 @@ systemctl enable kg-proxy
 systemctl stop kg-proxy 2>/dev/null || true
 systemctl start kg-proxy
 
+# 10. Restore Ownership (Fix for SFTP/Uploads)
+if [ -n "$SUDO_USER" ]; then
+    echo -e "${GREEN}[Post-Install] Restoring directory ownership to $SUDO_USER...${NC}"
+    chown -R $SUDO_USER:$(id -gn $SUDO_USER) .
+fi
+
 echo -e "${GREEN}== Installation Complete! ==${NC}"
 echo -e "Dashboard: http://$(hostname -I | awk '{print $1}'):8080"
 echo -e "Manage app using: ${GREEN}kgctl <command>${NC}"
