@@ -80,7 +80,14 @@ func main() {
 	// 3. Setup Handlers
 	h := handlers.NewHandler(db, wgService, fwService, ebpfService)
 
-	// 4. Setup Fiber
+	// 4. Initial Firewall Application
+	// This ensures management ports are open even if the DB was empty
+	system.Info("Applying initial firewall rules...")
+	if err := fwService.ApplyRules(); err != nil {
+		system.Error("Failed to apply initial firewall rules: %v", err)
+		// We don't log.Fatal here because the app might still be accessible via SSH/other means
+		// but we want this recorded.
+	}
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: false,
 	})
