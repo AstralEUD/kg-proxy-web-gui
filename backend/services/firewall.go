@@ -255,6 +255,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	sb.WriteString("-A PREROUTING -j GEO_GUARD\n")
 
+	// Exempt management ports from GEO_GUARD to prevent lockout
+	sb.WriteString("-A GEO_GUARD -p tcp -m multiport --dports 22,80,443,8080 -j RETURN\n")
+
 	sb.WriteString("-A GEO_GUARD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
 	// Always allow private ranges (SSH, Internal Network)
 	sb.WriteString("-A GEO_GUARD -s 10.0.0.0/8 -j RETURN\n")
