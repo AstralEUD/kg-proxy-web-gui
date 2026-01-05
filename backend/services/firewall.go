@@ -305,35 +305,22 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	// Get services from DB for DNAT rules
 	var services []models.Service
-	s.DB.Preload("Origin").Find(&services)
+	s.DB.Preload("Origin").Preload("Ports").Find(&services)
 
 	for _, svc := range services {
 		if svc.Origin.WgIP == "" {
 			continue
 		}
 
-		// DNAT rules for game traffic
+		// DNAT rules for dynamic service ports
 		// Pre-routing DNAT happens here.
 		// Note: Traffic has already passed Mangle PREROUTING checks.
-		if svc.PublicGamePort > 0 {
-			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
-				svc.PublicGamePort, svc.Origin.WgIP, svc.PublicGamePort))
-		}
-		if svc.PublicBrowserPort > 0 {
-			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
-				svc.PublicBrowserPort, svc.Origin.WgIP, svc.PublicBrowserPort))
-		}
-		if svc.PublicA2SPort > 0 {
-			sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j DNAT --to-destination %s:%d\n",
-				svc.PublicA2SPort, svc.Origin.WgIP, svc.PublicA2SPort))
-		}
-
-		// Arma 3 TCP/UDP variations
-		// Assuming Service model might not perfectly map yet, adding defaults if in range
-		if svc.PublicGamePort >= 2302 && svc.PublicGamePort <= 2356 {
-			// Add TCP for Arma 3
-			sb.WriteString(fmt.Sprintf("-A PREROUTING -p tcp --dport %d -j DNAT --to-destination %s:%d\n",
-				svc.PublicGamePort, svc.Origin.WgIP, svc.PublicGamePort))
+		for _, port := range svc.Ports {
+			if port.PublicPort > 0 && port.PrivatePort > 0 {
+				protocol := strings.ToLower(port.Protocol) // tcp or udp
+				sb.WriteString(fmt.Sprintf("-A PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d\n",
+					protocol, port.PublicPort, svc.Origin.WgIP, port.PrivatePort))
+			}
 		}
 	}
 

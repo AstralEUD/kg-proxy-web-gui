@@ -11,7 +11,7 @@ import (
 // GetServices - List all services
 func (h *Handler) GetServices(c *fiber.Ctx) error {
 	var services []models.Service
-	if err := h.DB.Preload("Origin").Find(&services).Error; err != nil {
+	if err := h.DB.Preload("Origin").Preload("Ports").Find(&services).Error; err != nil {
 		system.Error("Failed to fetch services: %v", err)
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -20,12 +20,17 @@ func (h *Handler) GetServices(c *fiber.Ctx) error {
 
 // CreateService - Add new service
 func (h *Handler) CreateService(c *fiber.Ctx) error {
+	type PortInput struct {
+		Name        string `json:"name"`
+		Protocol    string `json:"protocol"`
+		PublicPort  int    `json:"public_port"`
+		PrivatePort int    `json:"private_port"`
+	}
+
 	var input struct {
-		Name              string `json:"name"`
-		OriginID          uint   `json:"origin_id"`
-		PublicGamePort    int    `json:"public_game_port"`
-		PublicBrowserPort int    `json:"public_browser_port"`
-		PublicA2SPort     int    `json:"public_a2s_port"`
+		Name     string      `json:"name"`
+		OriginID uint        `json:"origin_id"`
+		Ports    []PortInput `json:"ports"`
 	}
 
 	if err := c.BodyParser(&input); err != nil {
@@ -38,12 +43,10 @@ func (h *Handler) CreateService(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Origin not found"})
 	}
 
+	// Create Service
 	service := models.Service{
-		Name:              input.Name,
-		OriginID:          input.OriginID,
-		PublicGamePort:    input.PublicGamePort,
-		PublicBrowserPort: input.PublicBrowserPort,
-		PublicA2SPort:     input.PublicA2SPort,
+		Name:     input.Name,
+		OriginID: input.OriginID,
 	}
 
 	if err := h.DB.Create(&service).Error; err != nil {
@@ -51,7 +54,21 @@ func (h *Handler) CreateService(c *fiber.Ctx) error {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	system.Info("Service created: %s", service.Name)
+	// Create Ports
+	for _, p := range input.Ports {
+		port := models.ServicePort{
+			ServiceID:   service.ID,
+			Name:        p.Name,
+			Protocol:    p.Protocol,
+			PublicPort:  p.PublicPort,
+			PrivatePort: p.PrivatePort,
+		}
+		if err := h.DB.Create(&port).Error; err != nil {
+			system.Warn("Failed to create port %d for service %s: %v", p.PublicPort, service.Name, err)
+		}
+	}
+
+	system.Info("Service created: %s with %d ports", service.Name, len(input.Ports))
 	AddEvent("success", "Service created: "+service.Name)
 
 	// Auto-apply firewall rules after service creation
@@ -63,6 +80,8 @@ func (h *Handler) CreateService(c *fiber.Ctx) error {
 		}
 	}
 
+	// Return full object with ports
+	h.DB.Preload("Ports").First(&service, service.ID)
 	return c.Status(http.StatusCreated).JSON(service)
 }
 

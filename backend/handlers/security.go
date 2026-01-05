@@ -90,20 +90,17 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		}
 	}
 
-	// Handle blocked IPs (clear and recreate)
-	h.DB.Where("is_auto = ?", false).Delete(&models.BanIP{})
-	for _, ip := range input.BlockedIPs {
-		if ip != "" {
-			h.DB.Create(&models.BanIP{
-				IP:     ip,
-				Reason: "Manual blacklist",
-				IsAuto: false,
-			})
-		}
-	}
+	// Handle blocked IPs (clear and recreate) - REMOVED
+	// We no longer handle blocked IPs in this bulk settings update.
+	// They are managed via granular API endpoints (/security/rules/block).
 
 	system.Info("Security settings updated: eBPF=%v, Protection=%d", settings.EBPFEnabled, settings.ProtectionLevel)
 	AddEvent("success", "Security settings applied")
+
+	// Apply Firewall Rules
+	if h.Firewall != nil {
+		go h.Firewall.ApplyRules()
+	}
 
 	return c.JSON(fiber.Map{"message": "Settings applied successfully", "settings": settings})
 }
@@ -131,7 +128,10 @@ func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
 	if err := h.DB.Create(&input).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// TODO: Notify Firewall/eBPF service
+
+	if h.Firewall != nil {
+		go h.Firewall.ApplyRules()
+	}
 	return c.JSON(input)
 }
 
@@ -141,7 +141,10 @@ func (h *Handler) DeleteAllowIP(c *fiber.Ctx) error {
 	if err := h.DB.Delete(&models.AllowIP{}, id).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// TODO: Notify Firewall/eBPF service
+
+	if h.Firewall != nil {
+		go h.Firewall.ApplyRules()
+	}
 	return c.JSON(fiber.Map{"success": true})
 }
 
@@ -155,7 +158,10 @@ func (h *Handler) AddBanIP(c *fiber.Ctx) error {
 	if err := h.DB.Create(&input).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// TODO: Notify Firewall/eBPF service
+
+	if h.Firewall != nil {
+		go h.Firewall.ApplyRules()
+	}
 	return c.JSON(input)
 }
 
@@ -165,7 +171,10 @@ func (h *Handler) DeleteBanIP(c *fiber.Ctx) error {
 	if err := h.DB.Delete(&models.BanIP{}, id).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// TODO: Notify Firewall/eBPF service
+
+	if h.Firewall != nil {
+		go h.Firewall.ApplyRules()
+	}
 	return c.JSON(fiber.Map{"success": true})
 }
 

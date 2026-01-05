@@ -5,26 +5,30 @@ import (
 )
 
 type Origin struct {
-	ID                  uint      `gorm:"primaryKey" json:"id"`
-	Name                string    `gorm:"unique;not null" json:"name"`
-	WgIP                string    `gorm:"not null" json:"wg_ip"`
-	ReforgerGamePort    int       `gorm:"default:20001" json:"reforger_game_port"`
-	ReforgerBrowserPort int       `gorm:"default:17777" json:"reforger_browser_port"`
-	ReforgerA2SPort     int       `gorm:"default:27016" json:"reforger_a2s_port"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	Services            []Service `gorm:"foreignKey:OriginID" json:"services,omitempty"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"unique;not null" json:"name"`
+	WgIP      string    `gorm:"not null" json:"wg_ip"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Services  []Service `gorm:"foreignKey:OriginID" json:"services,omitempty"`
 }
 
 type Service struct {
-	ID                uint      `gorm:"primaryKey" json:"id"`
-	Name              string    `gorm:"unique;not null" json:"name"`
-	OriginID          uint      `gorm:"not null" json:"origin_id"`
-	Origin            Origin    `json:"-"`
-	PublicGamePort    int       `gorm:"not null" json:"public_game_port"`
-	PublicBrowserPort int       `gorm:"not null" json:"public_browser_port"`
-	PublicA2SPort     int       `gorm:"not null" json:"public_a2s_port"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID        uint          `gorm:"primaryKey" json:"id"`
+	Name      string        `gorm:"unique;not null" json:"name"`
+	OriginID  uint          `gorm:"not null" json:"origin_id"`
+	Origin    Origin        `json:"-"`
+	Ports     []ServicePort `gorm:"foreignKey:ServiceID;constraint:OnDelete:CASCADE;" json:"ports"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+type ServicePort struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	ServiceID   uint   `gorm:"not null" json:"service_id"`
+	Name        string `json:"name"` // e.g. "Game Port", "Query Port"
+	Protocol    string `gorm:"not null" json:"protocol"`
+	PublicPort  int    `gorm:"not null" json:"public_port"`
+	PrivatePort int    `gorm:"not null" json:"private_port"`
 }
 
 type AllowForeign struct {

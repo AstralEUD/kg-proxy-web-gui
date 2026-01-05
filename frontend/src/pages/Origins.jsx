@@ -230,7 +230,7 @@ export default function Origins() {
                                         WireGuard IP: <code style={{ color: '#00e5ff' }}>{origin.wg_ip || 'N/A'}</code>
                                     </Typography>
                                     <Typography variant="caption" color="textSecondary">
-                                        Ports: {origin.reforger_game_port}/{origin.reforger_browser_port}/{origin.reforger_a2s_port}
+                                        Manage ports in Services menu
                                     </Typography>
                                 </CardContent>
                                 <CardActions sx={{ borderTop: '1px solid #1a1a1a', px: 2, py: 1 }}>
@@ -293,40 +293,8 @@ export default function Origins() {
                                         sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
                                     />
                                     <Typography variant="caption" color="textSecondary" sx={{ textAlign: 'left' }}>
-                                        Modify ports only if you know what you are doing. Reforger default ports shown.
+                                        Services and Ports are now configured in the 'Services' menu.
                                     </Typography>
-                                    <Grid container spacing={2}>
-                                        <Grid item xs={4}>
-                                            <TextField
-                                                label="Game Port"
-                                                size="small"
-                                                type="number"
-                                                value={formData.reforger_game_port}
-                                                onChange={(e) => setFormData({ ...formData, reforger_game_port: parseInt(e.target.value) })}
-                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
-                                            />
-                                        </Grid>
-                                        <Grid item xs={4}>
-                                            <TextField
-                                                label="Browser Port"
-                                                size="small"
-                                                type="number"
-                                                value={formData.reforger_browser_port}
-                                                onChange={(e) => setFormData({ ...formData, reforger_browser_port: parseInt(e.target.value) })}
-                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
-                                            />
-                                        </Grid>
-                                        <Grid item xs={4}>
-                                            <TextField
-                                                label="Query Port"
-                                                size="small"
-                                                type="number"
-                                                value={formData.reforger_a2s_port}
-                                                onChange={(e) => setFormData({ ...formData, reforger_a2s_port: parseInt(e.target.value) })}
-                                                sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
-                                            />
-                                        </Grid>
-                                    </Grid>
                                 </Box>
                             ) : (
                                 <>

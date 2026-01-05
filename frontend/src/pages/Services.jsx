@@ -13,9 +13,7 @@ export default function Services() {
     const [formData, setFormData] = useState({
         name: '',
         origin_id: '',
-        public_game_port: 2302,
-        public_browser_port: 2303,
-        public_a2s_port: 2304
+        ports: [{ name: 'Game Port', protocol: 'UDP', public_port: 2302, private_port: 2302 }]
     });
     const queryClient = useQueryClient();
 
@@ -43,7 +41,11 @@ export default function Services() {
         onSuccess: () => {
             queryClient.invalidateQueries(['services']);
             setOpen(false);
-            setFormData({ name: '', origin_id: '', public_game_port: 2302, public_browser_port: 2303, public_a2s_port: 2304 });
+            setFormData({
+                name: '',
+                origin_id: '',
+                ports: [{ name: 'Game Port', protocol: 'UDP', public_port: 2302, private_port: 2302 }]
+            });
         },
     });
 
@@ -54,13 +56,36 @@ export default function Services() {
     });
 
     const handleSubmit = () => {
-        createMutation.mutate({
+        const payload = {
             name: formData.name,
             origin_id: parseInt(formData.origin_id),
-            public_game_port: parseInt(formData.public_game_port),
-            public_browser_port: parseInt(formData.public_browser_port),
-            public_a2s_port: parseInt(formData.public_a2s_port)
+            ports: formData.ports.map(p => ({
+                name: p.name,
+                protocol: p.protocol,
+                public_port: parseInt(p.public_port),
+                private_port: parseInt(p.private_port)
+            }))
+        };
+        createMutation.mutate(payload);
+    };
+
+    const handleAddPort = () => {
+        setFormData({
+            ...formData,
+            ports: [...formData.ports, { name: 'New Port', protocol: 'UDP', public_port: 0, private_port: 0 }]
         });
+    };
+
+    const handleRemovePort = (index) => {
+        const newPorts = [...formData.ports];
+        newPorts.splice(index, 1);
+        setFormData({ ...formData, ports: newPorts });
+    };
+
+    const handlePortChange = (index, field, value) => {
+        const newPorts = [...formData.ports];
+        newPorts[index][field] = value;
+        setFormData({ ...formData, ports: newPorts });
     };
 
     const getOriginName = (originId) => {
@@ -113,7 +138,7 @@ export default function Services() {
                             <TableRow sx={{ '& th': { borderBottom: '1px solid #333', color: '#888', fontWeight: 'bold' } }}>
                                 <TableCell>Service Name</TableCell>
                                 <TableCell>Target Origin</TableCell>
-                                <TableCell>Ports (Game / Browser / Query)</TableCell>
+                                <TableCell>Port Forwarding Rules (Public -> Private)</TableCell>
                                 <TableCell>Created</TableCell>
                                 <TableCell align="right">Actions</TableCell>
                             </TableRow>
@@ -134,9 +159,26 @@ export default function Services() {
                                     </TableCell>
                                     <TableCell sx={{ color: '#aaa' }}>{getOriginName(service.origin_id)}</TableCell>
                                     <TableCell>
-                                        <code style={{ color: '#00e5ff', fontSize: 12 }}>
-                                            {service.public_game_port} / {service.public_browser_port} / {service.public_a2s_port}
-                                        </code>
+                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                            {service.ports?.map((p, i) => (
+                                                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <Chip
+                                                        label={p.protocol}
+                                                        size="small"
+                                                        sx={{
+                                                            height: 16,
+                                                            fontSize: 9,
+                                                            bgcolor: p.protocol === 'UDP' ? '#ff980020' : '#2196f320',
+                                                            color: p.protocol === 'UDP' ? '#ff9800' : '#2196f3'
+                                                        }}
+                                                    />
+                                                    <code style={{ color: '#00e5ff', fontSize: 12 }}>{p.public_port}</code>
+                                                    <span style={{ color: '#666', fontSize: 10 }}>➞</span>
+                                                    <code style={{ color: '#aaa', fontSize: 12 }}>{p.private_port}</code>
+                                                    {p.name && <span style={{ color: '#666', fontSize: 10 }}>({p.name})</span>}
+                                                </Box>
+                                            ))}
+                                        </Box>
                                     </TableCell>
                                     <TableCell sx={{ color: '#666', fontSize: 12 }}>
                                         {new Date(service.created_at).toLocaleDateString()}
@@ -160,7 +202,7 @@ export default function Services() {
             )}
 
             {/* Add Service Dialog */}
-            <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
+            <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
                 <DialogTitle sx={{ color: '#00e5ff' }}>Add New Service</DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
@@ -184,38 +226,72 @@ export default function Services() {
                                 ))}
                             </Select>
                         </FormControl>
-                        <Grid container spacing={2}>
-                            <Grid item xs={4}>
-                                <TextField
-                                    fullWidth
-                                    label="Game Port"
-                                    type="number"
-                                    value={formData.public_game_port}
-                                    onChange={(e) => setFormData({ ...formData, public_game_port: e.target.value })}
-                                    sx={{ bgcolor: '#0a0a0a' }}
-                                />
-                            </Grid>
-                            <Grid item xs={4}>
-                                <TextField
-                                    fullWidth
-                                    label="Browser Port"
-                                    type="number"
-                                    value={formData.public_browser_port}
-                                    onChange={(e) => setFormData({ ...formData, public_browser_port: e.target.value })}
-                                    sx={{ bgcolor: '#0a0a0a' }}
-                                />
-                            </Grid>
-                            <Grid item xs={4}>
-                                <TextField
-                                    fullWidth
-                                    label="Query Port"
-                                    type="number"
-                                    value={formData.public_a2s_port}
-                                    onChange={(e) => setFormData({ ...formData, public_a2s_port: e.target.value })}
-                                    sx={{ bgcolor: '#0a0a0a' }}
-                                />
-                            </Grid>
-                        </Grid>
+
+                        <Typography variant="subtitle2" sx={{ color: '#888', mt: 2 }}>Port Forwarding Rules</Typography>
+                        <Box sx={{ maxHeight: 300, overflowY: 'auto', pr: 1 }}>
+                            {formData.ports.map((port, index) => (
+                                <Grid container spacing={1} key={index} sx={{ mb: 1, alignItems: 'center' }}>
+                                    <Grid item xs={2}>
+                                        <FormControl fullWidth size="small" sx={{ bgcolor: '#0a0a0a' }}>
+                                            <Select
+                                                value={port.protocol}
+                                                onChange={(e) => handlePortChange(index, 'protocol', e.target.value)}
+                                            >
+                                                <MenuItem value="UDP">UDP</MenuItem>
+                                                <MenuItem value="TCP">TCP</MenuItem>
+                                            </Select>
+                                        </FormControl>
+                                    </Grid>
+                                    <Grid item xs={3}>
+                                        <TextField
+                                            label="Public (VPS)"
+                                            type="number"
+                                            size="small"
+                                            fullWidth
+                                            value={port.public_port}
+                                            onChange={(e) => handlePortChange(index, 'public_port', parseInt(e.target.value))}
+                                            sx={{ bgcolor: '#0a0a0a' }}
+                                        />
+                                    </Grid>
+                                    <Grid item xs={1} sx={{ textAlign: 'center', color: '#666' }}>➞</Grid>
+                                    <Grid item xs={3}>
+                                        <TextField
+                                            label="Private (Origin)"
+                                            type="number"
+                                            size="small"
+                                            fullWidth
+                                            value={port.private_port}
+                                            onChange={(e) => handlePortChange(index, 'private_port', parseInt(e.target.value))}
+                                            sx={{ bgcolor: '#0a0a0a' }}
+                                        />
+                                    </Grid>
+                                    <Grid item xs={2}>
+                                        <TextField
+                                            label="Label"
+                                            size="small"
+                                            fullWidth
+                                            value={port.name}
+                                            onChange={(e) => handlePortChange(index, 'name', e.target.value)}
+                                            sx={{ bgcolor: '#0a0a0a' }}
+                                        />
+                                    </Grid>
+                                    <Grid item xs={1}>
+                                        <IconButton size="small" onClick={() => handleRemovePort(index)} color="error">
+                                            <Delete fontSize="small" />
+                                        </IconButton>
+                                    </Grid>
+                                </Grid>
+                            ))}
+                        </Box>
+                        <Button
+                            startIcon={<AddIcon />}
+                            size="small"
+                            onClick={handleAddPort}
+                            sx={{ alignSelf: 'flex-start' }}
+                        >
+                            Add Port Rule
+                        </Button>
+
                     </Box>
                 </DialogContent>
                 <DialogActions>

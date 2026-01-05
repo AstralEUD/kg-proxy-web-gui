@@ -4,12 +4,113 @@ import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, But
 import { Shield, Public, GppGood, Bolt, Add, Delete, CheckCircle } from '@mui/icons-material';
 import client from '../api/client';
 
+function AccessRulesManager() {
+    const [tab, setTab] = useState('block'); // 'allow' or 'block'
+    const [ip, setIp] = useState('');
+    const [label, setLabel] = useState('');
+    const queryClient = useQueryClient();
+
+    const { data: rules, isLoading } = useQuery({
+        queryKey: ['ip-rules'],
+        queryFn: async () => {
+            const res = await client.get('/security/rules');
+            return res.data;
+        }
+    });
+
+    const addMutation = useMutation({
+        mutationFn: (data) => client.post(`/security/rules/${tab}`, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries(['ip-rules']);
+            setIp('');
+            setLabel('');
+        }
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: (id) => client.delete(`/security/rules/${tab}/${id}`),
+        onSuccess: () => queryClient.invalidateQueries(['ip-rules'])
+    });
+
+    const handleAdd = () => {
+        if (!ip) return;
+        const payload = tab === 'allow' ? { ip, label } : { ip, reason: label };
+        addMutation.mutate(payload);
+    };
+
+    return (
+        <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
+            <CardContent>
+                <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
+                    <Shield sx={{ mr: 1, color: tab === 'allow' ? '#00c853' : '#f50057' }} /> Access Control Rules
+                </Typography>
+
+                <Box sx={{ display: 'flex', mb: 2, borderBottom: '1px solid #333' }}>
+                    <Button
+                        onClick={() => setTab('block')}
+                        sx={{ flex: 1, color: tab === 'block' ? '#f50057' : '#666', borderBottom: tab === 'block' ? '2px solid #f50057' : 'none', borderRadius: 0 }}
+                    >
+                        Denied (Blacklist)
+                    </Button>
+                    <Button
+                        onClick={() => setTab('allow')}
+                        sx={{ flex: 1, color: tab === 'allow' ? '#00c853' : '#666', borderBottom: tab === 'allow' ? '2px solid #00c853' : 'none', borderRadius: 0 }}
+                    >
+                        Allowed (Whitelist)
+                    </Button>
+                </Box>
+
+                <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                    <TextField
+                        size="small"
+                        placeholder="IP Address"
+                        value={ip}
+                        onChange={e => setIp(e.target.value)}
+                        sx={{ flex: 2, bgcolor: '#0a0a0a' }}
+                    />
+                    <TextField
+                        size="small"
+                        placeholder={tab === 'allow' ? "Label" : "Reason"}
+                        value={label}
+                        onChange={e => setLabel(e.target.value)}
+                        sx={{ flex: 2, bgcolor: '#0a0a0a' }}
+                    />
+                    <Button
+                        variant="contained"
+                        color={tab === 'allow' ? "success" : "error"}
+                        onClick={handleAdd}
+                        disabled={!ip}
+                    >
+                        Add
+                    </Button>
+                </Box>
+
+                <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
+                    {isLoading ? <CircularProgress size={20} /> : (
+                        (tab === 'block' ? rules?.blocked : rules?.allowed)?.map(item => (
+                            <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1, mb: 1, bgcolor: '#1a1a1a', borderRadius: 1 }}>
+                                <Box>
+                                    <Typography variant="body2" sx={{ fontFamily: 'monospace', color: tab === 'allow' ? '#00c853' : '#f50057' }}>{item.ip}</Typography>
+                                    <Typography variant="caption" sx={{ color: '#666' }}>{item.label || item.reason || 'No description'}</Typography>
+                                </Box>
+                                <IconButton size="small" onClick={() => deleteMutation.mutate(item.id)}>
+                                    <Delete fontSize="small" />
+                                </IconButton>
+                            </Box>
+                        ))
+                    )}
+                    {(!isLoading && (tab === 'block' ? rules?.blocked : rules?.allowed)?.length === 0) && (
+                        <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: '#666', mt: 2 }}>No rules found.</Typography>
+                    )}
+                </Box>
+            </CardContent>
+        </Card>
+    );
+}
+
 export default function Policy() {
     const queryClient = useQueryClient();
-    const [newIp, setNewIp] = useState('');
-    const [error, setError] = useState('');
     const [notification, setNotification] = useState({ open: false, message: '' });
-    const [blockedIps, setBlockedIps] = useState([]);
 
     const allCountries = ["KR", "US", "CN", "JP", "DE", "RU", "BR", "GB", "CA", "AU", "IN", "FR", "ID", "VN"];
 
@@ -26,20 +127,6 @@ export default function Policy() {
             };
         },
     });
-
-    // Fetch blocked IPs from DB
-    useEffect(() => {
-        const fetchBlockedIps = async () => {
-            try {
-                // Assuming we have an endpoint to get manual blocks
-                // For now, we'll just initialize empty
-                setBlockedIps([]);
-            } catch (err) {
-                console.error('Failed to load blocked IPs:', err);
-            }
-        };
-        fetchBlockedIps();
-    }, []);
 
     // Update mutation
     const updateMutation = useMutation({
@@ -76,36 +163,9 @@ export default function Policy() {
         });
     };
 
-    const validateIP = (ip) => {
-        const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-        return ipv4Regex.test(ip);
-    };
-
-    const handleAddIp = () => {
-        if (!newIp) return;
-        if (!validateIP(newIp)) {
-            setError('Invalid IP address format (e.g., 192.168.1.1)');
-            return;
-        }
-        if (blockedIps.includes(newIp)) {
-            setError('IP is already in the blacklist');
-            return;
-        }
-        setBlockedIps([...blockedIps, newIp]);
-        setNewIp('');
-        setError('');
-    };
-
-    const handleDeleteIp = (ip) => {
-        setBlockedIps(blockedIps.filter(i => i !== ip));
-    };
-
     const handleApply = () => {
         if (!settings) return;
-        updateMutation.mutate({
-            ...settings,
-            blocked_ips: blockedIps
-        });
+        updateMutation.mutate(settings);
     };
 
     if (isLoading) {
@@ -188,37 +248,9 @@ export default function Policy() {
                     </Card>
                 </Grid>
 
-                {/* 3. Custom IP Blocking */}
+                {/* 3. Access Control Rules (Whitelist / Blacklist) */}
                 <Grid item xs={12} md={6}>
-                    <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
-                        <CardContent>
-                            <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
-                                <Shield sx={{ mr: 1, color: '#f50057' }} /> Custom IP Blacklist
-                            </Typography>
-                            <Box sx={{ display: 'flex', mb: 1 }}>
-                                <TextField
-                                    size="small"
-                                    fullWidth
-                                    placeholder="Enter IP Address (e.g. 1.2.3.4)"
-                                    value={newIp}
-                                    onChange={(e) => { setNewIp(e.target.value); setError(''); }}
-                                    error={!!error}
-                                    helperText={error}
-                                    sx={{ mr: 1, bgcolor: '#0a0a0a', '& input': { color: '#fff' }, '& fieldset': { borderColor: '#333' } }}
-                                />
-                                <Button variant="contained" color="error" onClick={handleAddIp} startIcon={<Add />} sx={{ height: 40 }}>Block</Button>
-                            </Box>
-                            <Box sx={{ maxHeight: 150, overflow: 'auto', border: '1px solid #222', borderRadius: 1, p: 1 }}>
-                                {blockedIps.map(ip => (
-                                    <Box key={ip} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, bgcolor: '#222', px: 1, borderRadius: 1 }}>
-                                        <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#f50057' }}>{ip}</Typography>
-                                        <IconButton size="small" onClick={() => handleDeleteIp(ip)}><Delete sx={{ fontSize: 16, color: '#666' }} /></IconButton>
-                                    </Box>
-                                ))}
-                                {blockedIps.length === 0 && <Typography variant="caption" sx={{ color: '#666' }}>No custom blocked IPs.</Typography>}
-                            </Box>
-                        </CardContent>
-                    </Card>
+                    <AccessRulesManager />
                 </Grid>
 
                 {/* 4. Next-Gen Tech */}

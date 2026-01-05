@@ -121,7 +121,7 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 
 	// Calculate required ports based on services
 	var services []models.Service
-	h.DB.Find(&services)
+	h.DB.Preload("Ports").Find(&services)
 
 	requiredPorts := []PortRequirement{
 		{Port: 22, Protocol: "TCP", Service: "SSH", Description: "Remote Management"},
@@ -132,19 +132,12 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	}
 
 	for _, svc := range services {
-		if svc.PublicGamePort > 0 {
+		for _, port := range svc.Ports {
 			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.PublicGamePort, Protocol: "UDP", Service: "Game", Description: fmt.Sprintf("Game Port (%s)", svc.Name),
-			})
-		}
-		if svc.PublicBrowserPort > 0 {
-			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.PublicBrowserPort, Protocol: "UDP", Service: "Browser", Description: fmt.Sprintf("Browser Port (%s)", svc.Name),
-			})
-		}
-		if svc.PublicA2SPort > 0 {
-			requiredPorts = append(requiredPorts, PortRequirement{
-				Port: svc.PublicA2SPort, Protocol: "UDP", Service: "Query", Description: fmt.Sprintf("Query Port (%s)", svc.Name),
+				Port:        port.PublicPort,
+				Protocol:    port.Protocol,
+				Service:     svc.Name,
+				Description: fmt.Sprintf("%s (%s -> %d)", port.Name, port.Protocol, port.PrivatePort),
 			})
 		}
 	}

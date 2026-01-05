@@ -45,7 +45,7 @@ func main() {
 	// Migrate
 	// Migrate
 	// CRITICAL: Ensure schema is up to date. Panic if migration fails.
-	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.AllowForeign{}, &models.BanIP{}, &models.AllowIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
+	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.ServicePort{}, &models.AllowForeign{}, &models.BanIP{}, &models.AllowIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
 		system.Error("Database migration failed: %v", err)
 		log.Fatalf("CRITICAL: Database migration failed. Application cannot start: %v", err)
 	}
