@@ -103,8 +103,8 @@ export default function Traffic() {
             {/* Service Pipe Visualization */}
             <Box sx={{ mb: 3 }}>
                 <ServicePipe
-                    activeCount={backendStats.connections || 0}
-                    totalCount={backendStats.connections || 0}
+                    activeCount={data.length}
+                    totalCount={data.length}
                     passedCount={filteredData.filter(d => d.status === 'allowed').length}
                 />
             </Box>
@@ -177,13 +177,27 @@ export default function Traffic() {
                             </Grid>
 
                             <Box sx={{ mt: 4, pt: 2, borderTop: '1px solid #333' }}>
-                                <Typography variant="body2" color="textSecondary">System Status:</Typography>
-                                <Typography variant="h5" sx={{ color: '#00e5ff', fontWeight: 'bold' }}>
+                                <Typography variant="body2" color="textSecondary" gutterBottom>System Status:</Typography>
+                                <Typography variant="h5" sx={{ color: '#00e5ff', fontWeight: 'bold', mb: 0.5 }}>
                                     {backendStats.connections} <span style={{ fontSize: 12 }}>connections</span>
                                 </Typography>
-                                <Typography variant="caption" color="textSecondary">
+                                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                                     Uptime: {backendStats.uptime}
                                 </Typography>
+
+                                <Typography variant="body2" color="textSecondary" gutterBottom sx={{ mt: 2 }}>Active Defenses:</Typography>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                    {backendStats.active_defenses?.length > 0 ? (
+                                        backendStats.active_defenses.map((def, idx) => (
+                                            <Box key={idx} sx={{ display: 'flex', alignItems: 'center' }}>
+                                                <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#00c853', mr: 1, boxShadow: '0 0 5px #00c853' }} />
+                                                <Typography variant="caption" sx={{ color: '#ccc' }}>{def}</Typography>
+                                            </Box>
+                                        ))
+                                    ) : (
+                                        <Typography variant="caption" color="textSecondary" sx={{ fontStyle: 'italic' }}>Running basic checks only</Typography>
+                                    )}
+                                </Box>
                             </Box>
                         </CardContent>
                     </Card>

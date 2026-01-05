@@ -35,7 +35,14 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		var count int64
 		h.DB.Model(&models.Admin{}).Count(&count)
 		if count == 0 && req.Username == "admin" && req.Password == "admin123!" {
-			system.Info("Default admin login - no users in database")
+			// Create the user so it persists and shows up in User Management
+			hashed, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+			admin = models.Admin{Username: req.Username, Password: string(hashed)}
+			if err := h.DB.Create(&admin).Error; err != nil {
+				system.Error("Failed to create default admin user: %v", err)
+			} else {
+				system.Info("Default admin login - Created persistent 'admin' user")
+			}
 			goto GenerateToken
 		}
 		system.Warn("Failed login attempt for user: %s", req.Username)

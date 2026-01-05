@@ -12,14 +12,24 @@ func (s *FirewallService) ApplyHardening(level int) error {
 
 	// 1. Define Sysctl Rules based on documentation
 	sysctlRules := map[string]string{
-		// === SYN Flood Protection ===
+		// === SYN Flood Protection & High Throughput ===
 		"net.ipv4.tcp_syncookies":      "1",
-		"net.ipv4.tcp_max_syn_backlog": "4096",
+		"net.ipv4.tcp_max_syn_backlog": "65535", // Aggressive for 10Gbps
 		"net.ipv4.tcp_syn_retries":     "2",
 		"net.ipv4.tcp_synack_retries":  "2",
 		"net.ipv4.tcp_timestamps":      "1",
+		"net.core.somaxconn":           "65535", // Max listener backlog
 
-		// === Conntrack Optimization ===
+		// === Read/Write Buffer Tuning (16MB for UDP absorption) ===
+		"net.core.rmem_max":   "16777216",
+		"net.core.wmem_max":   "16777216",
+		"net.core.optmem_max": "65536",
+		"net.ipv4.udp_mem":    "3145728 4194304 8388608", // Tuned for 8GB RAM
+
+		// === High Throughput Backlog ===
+		"net.core.netdev_max_backlog": "30000", // Handle 10Gbps bursts
+
+		// === Conntrack Optimization (8GB RAM Target) ===
 		"net.netfilter.nf_conntrack_max":                     "2000000",
 		"net.netfilter.nf_conntrack_tcp_timeout_established": "600",
 		"net.netfilter.nf_conntrack_tcp_timeout_time_wait":   "60",
@@ -45,10 +55,11 @@ func (s *FirewallService) ApplyHardening(level int) error {
 		"net.ipv4.icmp_ignore_bogus_error_responses": "1",
 	}
 
-	// 2. Tune based on protection level
-	if level >= 2 { // High protection
-		sysctlRules["net.ipv4.tcp_max_syn_backlog"] = "8192"
-		sysctlRules["net.netfilter.nf_conntrack_max"] = "3000000"
+	// 2. Tune based on protection level (Refined logic: Always apply base high-performance rules above)
+	if level >= 2 {
+		// Extra aggressive for High Protection Mode (if needed, but defaults above are already high)
+		// We keep this block for future dynamic adjustments
+		sysctlRules["net.netfilter.nf_conntrack_max"] = "2000000"
 	}
 
 	// 3. Apply Rules

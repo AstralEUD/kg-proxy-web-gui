@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
 	"kg-proxy-web-gui/backend/system"
 	"runtime"
@@ -13,18 +14,19 @@ import (
 
 // SystemStatus represents the current system state
 type SystemStatus struct {
-	OS            string            `json:"os"`
-	MockMode      bool              `json:"mock_mode"`
-	Uptime        string            `json:"uptime"`
-	CPUUsage      int               `json:"cpu_usage"`
-	MemoryUsage   int               `json:"memory_usage"`
-	DiskUsage     int               `json:"disk_usage"`
-	Connections   int               `json:"connections"`
-	BlockedCount  int               `json:"blocked_count"`
-	OriginsCount  int               `json:"origins_count"`
-	FirewallRules []string          `json:"firewall_rules"`
-	Events        []SystemEvent     `json:"events"`
-	RequiredPorts []PortRequirement `json:"required_ports"`
+	OS             string            `json:"os"`
+	MockMode       bool              `json:"mock_mode"`
+	Uptime         string            `json:"uptime"`
+	CPUUsage       int               `json:"cpu_usage"`
+	MemoryUsage    int               `json:"memory_usage"`
+	DiskUsage      int               `json:"disk_usage"`
+	Connections    int               `json:"connections"`
+	BlockedCount   int               `json:"blocked_count"`
+	OriginsCount   int               `json:"origins_count"`
+	FirewallRules  []string          `json:"firewall_rules"`
+	Events         []SystemEvent     `json:"events"`
+	RequiredPorts  []PortRequirement `json:"required_ports"`
+	ActiveDefenses []string          `json:"active_defenses"`
 }
 
 type SystemEvent struct {
@@ -158,6 +160,36 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		FirewallRules: rules,
 		Events:        GetEventLog(),
 		RequiredPorts: requiredPorts,
+		ActiveDefenses: func() []string {
+			var defs []string
+			var settings models.SecuritySettings
+			if err := h.DB.First(&settings, 1).Error; err == nil {
+				if settings.GlobalProtection {
+					defs = append(defs, "Invalid Packet Drop")
+					defs = append(defs, "TCP Flag Validation")
+					defs = append(defs, "Bogon Filtering")
+					defs = append(defs, "ICMP Rate Limiting")
+				}
+				if settings.SYNCookies {
+					defs = append(defs, "SYN Flood Protection (Cookies)")
+				}
+				if settings.BlockVPN {
+					defs = append(defs, "VPN/Proxy Blocking")
+				}
+				if settings.BlockTOR {
+					defs = append(defs, "TOR Exit Node Blocking")
+				}
+				if lvl := settings.ProtectionLevel; lvl >= 2 {
+					defs = append(defs, "High Sensitivity Flood Detection")
+				} else {
+					defs = append(defs, "Standard Flood Detection")
+				}
+			} else {
+				// Default assumption if DB read fails (defaults)
+				defs = []string{"Invalid Packet Drop", "Bogon Filtering", "Standard Flood Detection"}
+			}
+			return defs
+		}(),
 	}
 
 	return c.JSON(status)

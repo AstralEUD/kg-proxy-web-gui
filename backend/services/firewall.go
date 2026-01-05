@@ -364,8 +364,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	// Forwarding rules (Critical for NAT)
 	// Allow forwarded traffic that passed Mangle checks
+	// Allow NEW connections from wg0 (Origin) to eth0 (Internet) for updates/APIs
 	sb.WriteString("-A FORWARD -i eth0 -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
-	sb.WriteString("-A FORWARD -i wg0 -o eth0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
+	sb.WriteString("-A FORWARD -i wg0 -o eth0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
 
 	sb.WriteString("COMMIT\n")
 
