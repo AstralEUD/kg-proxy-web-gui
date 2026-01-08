@@ -7,7 +7,9 @@ import (
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -17,10 +19,64 @@ import (
 type WireGuardService struct {
 	Executor system.CommandExecutor
 	Config   *models.SystemConfig
+	DataDir  string
 }
 
-func NewWireGuardService(exec system.CommandExecutor, cfg *models.SystemConfig) *WireGuardService {
-	return &WireGuardService{Executor: exec, Config: cfg}
+func NewWireGuardService(exec system.CommandExecutor, cfg *models.SystemConfig, dataDir string) *WireGuardService {
+	return &WireGuardService{Executor: exec, Config: cfg, DataDir: dataDir}
+}
+
+// Init ensures the WireGuard interface exists and is configured
+func (s *WireGuardService) Init() error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	// 1. Check if wg0 exists
+	if _, err := s.Executor.Execute("ip", "link", "show", "wg0"); err != nil {
+		system.Info("Creating WireGuard interface wg0...")
+		if _, err := s.Executor.Execute("ip", "link", "add", "dev", "wg0", "type", "wireguard"); err != nil {
+			return fmt.Errorf("failed to create wg0 interface: %v", err)
+		}
+	}
+
+	// 2. Assign IP (10.200.0.1/24) if not present
+	// Simple check: see if "10.200.0.1" is in the output of ip addr show wg0
+	out, _ := s.Executor.Execute("ip", "addr", "show", "wg0")
+	if !strings.Contains(out, "10.200.0.1") {
+		if _, err := s.Executor.Execute("ip", "addr", "add", "10.200.0.1/24", "dev", "wg0"); err != nil {
+			return fmt.Errorf("failed to assign IP to wg0: %v", err)
+		}
+	}
+
+	// 3. Ensure Server Private Key
+	keyPath := filepath.Join(s.DataDir, "wg_private.key")
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		system.Info("Generating new WireGuard server private key...")
+		privKey, err := s.generateKeyWithWG()
+		if err != nil {
+			return fmt.Errorf("failed to generate server key: %v", err)
+		}
+		if err := os.WriteFile(keyPath, []byte(privKey), 0600); err != nil {
+			return fmt.Errorf("failed to save server key: %v", err)
+		}
+	}
+
+	// 4. Apply Configuration (Key & Port)
+	// wg set wg0 private-key <file> listen-port 51820
+	// Note: 'wg set' expects the path to a file containing the key if using private-key argument with a path?
+	// Actually 'wg set ... private-key <file>' works.
+	if _, err := s.Executor.Execute("wg", "set", "wg0", "private-key", keyPath, "listen-port", "51820"); err != nil {
+		return fmt.Errorf("failed to configure wg0: %v", err)
+	}
+
+	// 5. Bring Interface Up
+	if _, err := s.Executor.Execute("ip", "link", "set", "up", "dev", "wg0"); err != nil {
+		return fmt.Errorf("failed to bring up wg0: %v", err)
+	}
+
+	system.Info("WireGuard interface wg0 initialized successfully")
+	return nil
 }
 
 // GenerateKeys returns privateKey, publicKey, error

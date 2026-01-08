@@ -68,7 +68,22 @@ func main() {
 	floodProtect := services.NewFloodProtection(protectionLevel)
 	system.Info("Flood protection initialized (level: %d)", protectionLevel)
 
-	wgService := services.NewWireGuardService(executor, sysConfig)
+	// Determine Data Directory
+	dataDir := os.Getenv("KG_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "." // Default to current dir if env not set
+	}
+	if _, err := os.Stat("/var/lib/kg-proxy"); err == nil && dataDir == "." {
+		dataDir = "/var/lib/kg-proxy"
+	}
+
+	wgService := services.NewWireGuardService(executor, sysConfig, dataDir)
+	// Initialize WireGuard Interface (Create wg0, assign IP, set key)
+	if err := wgService.Init(); err != nil {
+		system.Error("Failed to initialize WireGuard service: %v", err)
+		// We continue, but warn heavily. Connectivity will likely fail.
+	}
+
 	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
 	ebpfService := services.NewEBPFService()
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
