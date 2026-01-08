@@ -204,6 +204,12 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":GEO_GUARD - [0:0]\n")
 
 	if settings.GlobalProtection {
+		// 0. Unconditional Bypass for WireGuard (Internal & External)
+		// Allow all traffic from WireGuard interfaces (VPN internal traffic)
+		sb.WriteString("-A PREROUTING -i wg+ -j ACCEPT\n")
+		// Allow all WireGuard handshake/tunnel packets from Any IP (Public Peers)
+		sb.WriteString("-A PREROUTING -p udp --dport 51820 -j ACCEPT\n")
+
 		// 1-1. Early Drop: Invalid Packets
 		sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
 
@@ -247,7 +253,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
 
 		// 1-5h. UDP Flood Protection (Per-IP Rate Limit)
-		sb.WriteString("-A PREROUTING -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 120000/sec --hashlimit-burst 240000 -j ACCEPT\n")
+		sb.WriteString("-A PREROUTING -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 90000/sec --hashlimit-burst 180000 -j ACCEPT\n")
 		sb.WriteString("-A PREROUTING -p udp -j DROP\n")
 
 		// 1-5i. ICMP Flood Protection (Per-IP)
