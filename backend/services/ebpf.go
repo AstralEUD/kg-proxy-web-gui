@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,15 +201,23 @@ func (e *EBPFService) populateGeoIPMap() error {
 	system.Info("Populating GeoIP BPF map...")
 	count := 0
 
-	e.geoIPService.mu.RLock()
-	defer e.geoIPService.mu.RUnlock()
+	allCIDRs := e.geoIPService.GetAllCountryCIDRs()
 
-	for country, ranges := range e.geoIPService.countryRanges {
-		countryCode := uint32(country[0])<<8 | uint32(country[1])
+	for country, cidrs := range allCIDRs {
+		if len(country) < 2 {
+			continue
+		}
+		// Convert country code (e.g., "KR") to 16-bit int
+		c0 := strings.ToUpper(country)[0]
+		c1 := strings.ToUpper(country)[1]
+		countryCode := uint32(c0)<<8 | uint32(c1)
 
-		for _, ipRange := range ranges {
-			// For each IP in the range, add to map
-			ip := ipRange.IP.To4()
+		for _, cidr := range cidrs {
+			_, ipNet, err := net.ParseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			ip := ipNet.IP.To4()
 			if ip == nil {
 				continue
 			}
@@ -223,7 +232,7 @@ func (e *EBPFService) populateGeoIPMap() error {
 			count++
 
 			// Limit to prevent map overflow
-			if count >= 100000 {
+			if count >= 1000000 {
 				system.Warn("GeoIP map limit reached, some IPs not added")
 				return nil
 			}

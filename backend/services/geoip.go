@@ -385,6 +385,18 @@ func (g *GeoIPService) GetCountryCIDRs(countryCode string) []string {
 	return nil
 }
 
+// GetAllCountryCIDRs returns all loaded country CIDRs
+func (g *GeoIPService) GetAllCountryCIDRs() map[string][]string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	copy := make(map[string][]string)
+	for k, v := range g.countryCIDRs {
+		copy[k] = v
+	}
+	return copy
+}
+
 // DownloadCountryCIDRs downloads CIDR lists for specified countries
 func (g *GeoIPService) DownloadCountryCIDRs(countries []string) error {
 	g.mu.Lock()
