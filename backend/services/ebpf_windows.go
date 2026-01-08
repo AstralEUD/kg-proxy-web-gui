@@ -2,34 +2,26 @@
 
 package services
 
-// Mock xdpObjects for Windows compilation
-type xdpObjects struct {
-	GeoAllowed       *mockMap
-	IpStats          *mockMap
-	BlockedIps       *mockMap
-	XdpTrafficFilter *mockProgram
+import (
+	"time"
+)
+
+// EBPFService stub for Windows (eBPF is Linux-only)
+type EBPFService struct {
+	enabled bool
 }
 
-func (o *xdpObjects) Close() error {
-	return nil
+// NewEBPFService creates a stub service on Windows
+func NewEBPFService() *EBPFService {
+	return &EBPFService{enabled: false}
 }
 
-func loadXdpObjects(obj interface{}, opts interface{}) error {
-	return nil
-}
-
-type mockMap struct{}
-
-func (m *mockMap) Put(key, value interface{}) error    { return nil }
-func (m *mockMap) Lookup(key, value interface{}) error { return nil }
-func (m *mockMap) Close() error                        { return nil }
-func (m *mockMap) Iterate() interface{}                { return &mockIterator{} }
-
-type mockIterator struct{}
-
-func (i *mockIterator) Next(key, val interface{}) bool { return false }
-func (i *mockIterator) Err() error                     { return nil }
-
-type mockProgram struct{}
-
-func (p *mockProgram) Close() error { return nil }
+func (e *EBPFService) SetGeoIPService(g *GeoIPService)                      {}
+func (e *EBPFService) Enable() error                                        { return nil }
+func (e *EBPFService) Disable()                                             {}
+func (e *EBPFService) IsEnabled() bool                                      { return false }
+func (e *EBPFService) GetTrafficData() []TrafficEntry                       { return nil }
+func (e *EBPFService) GetStats() map[string]interface{}                     { return nil }
+func (e *EBPFService) AddBlockedIP(ip string, duration time.Duration) error { return nil }
+func (e *EBPFService) RemoveBlockedIP(ip string) error                      { return nil }
+func (e *EBPFService) UpdateGeoIPData()                                     {}

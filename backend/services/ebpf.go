@@ -1,3 +1,5 @@
+//go:build linux
+
 package services
 
 import (
@@ -15,18 +17,6 @@ import (
 )
 
 //go:generate bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" xdp ../ebpf/xdp_filter.c -- -I/usr/include/x86_64-linux-gnu
-
-// TrafficEntry represents a single traffic record
-type TrafficEntry struct {
-	SourceIP    string
-	DestPort    int
-	Protocol    string
-	PacketCount int
-	ByteCount   int64
-	Timestamp   time.Time
-	Blocked     bool
-	CountryCode string
-}
 
 // PacketStats matches the C struct
 type PacketStats struct {
@@ -395,22 +385,6 @@ func (e *EBPFService) IsEnabled() bool {
 }
 
 // Helper functions - Corrected for Endianness
-
-// ipToUint32 converts IP to uint32 in Big Endian (Network Byte Order)
-func ipToUint32(ip net.IP) uint32 {
-	ip = ip.To4()
-	if ip == nil {
-		return 0
-	}
-	return binary.BigEndian.Uint32(ip)
-}
-
-// uint32ToIP converts Big Endian uint32 back to IP
-func uint32ToIP(n uint32) net.IP {
-	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, n)
-	return ip
-}
 
 // UpdateBlockedIPs updates the blocked_ips BPF map
 func (e *EBPFService) UpdateBlockedIPs(ips []string) error {

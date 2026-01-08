@@ -1,112 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, IconButton, Alert, Snackbar, CircularProgress } from '@mui/material';
-import { Shield, Public, GppGood, Bolt, Add, Delete, CheckCircle } from '@mui/icons-material';
+import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, Alert, Snackbar, CircularProgress } from '@mui/material';
+import { Shield, Public, GppGood, Bolt, CheckCircle } from '@mui/icons-material';
 import client from '../api/client';
-
-function AccessRulesManager() {
-    const [tab, setTab] = useState('block'); // 'allow' or 'block'
-    const [ip, setIp] = useState('');
-    const [label, setLabel] = useState('');
-    const queryClient = useQueryClient();
-
-    const { data: rules, isLoading } = useQuery({
-        queryKey: ['ip-rules'],
-        queryFn: async () => {
-            const res = await client.get('/security/rules');
-            return res.data;
-        }
-    });
-
-    const addMutation = useMutation({
-        mutationFn: (data) => client.post(`/security/rules/${tab}`, data),
-        onSuccess: () => {
-            queryClient.invalidateQueries(['ip-rules']);
-            setIp('');
-            setLabel('');
-        }
-    });
-
-    const deleteMutation = useMutation({
-        mutationFn: (id) => client.delete(`/security/rules/${tab}/${id}`),
-        onSuccess: () => queryClient.invalidateQueries(['ip-rules'])
-    });
-
-    const handleAdd = () => {
-        if (!ip) return;
-        const payload = tab === 'allow' ? { ip, label } : { ip, reason: label };
-        addMutation.mutate(payload);
-    };
-
-    return (
-        <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
-            <CardContent>
-                <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
-                    <Shield sx={{ mr: 1, color: tab === 'allow' ? '#00c853' : '#f50057' }} /> Access Control Rules
-                </Typography>
-
-                <Box sx={{ display: 'flex', mb: 2, borderBottom: '1px solid #333' }}>
-                    <Button
-                        onClick={() => setTab('block')}
-                        sx={{ flex: 1, color: tab === 'block' ? '#f50057' : '#666', borderBottom: tab === 'block' ? '2px solid #f50057' : 'none', borderRadius: 0 }}
-                    >
-                        Denied (Blacklist)
-                    </Button>
-                    <Button
-                        onClick={() => setTab('allow')}
-                        sx={{ flex: 1, color: tab === 'allow' ? '#00c853' : '#666', borderBottom: tab === 'allow' ? '2px solid #00c853' : 'none', borderRadius: 0 }}
-                    >
-                        Allowed (Whitelist)
-                    </Button>
-                </Box>
-
-                <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                    <TextField
-                        size="small"
-                        placeholder="IP Address"
-                        value={ip}
-                        onChange={e => setIp(e.target.value)}
-                        sx={{ flex: 2, bgcolor: '#0a0a0a' }}
-                    />
-                    <TextField
-                        size="small"
-                        placeholder={tab === 'allow' ? "Label" : "Reason"}
-                        value={label}
-                        onChange={e => setLabel(e.target.value)}
-                        sx={{ flex: 2, bgcolor: '#0a0a0a' }}
-                    />
-                    <Button
-                        variant="contained"
-                        color={tab === 'allow' ? "success" : "error"}
-                        onClick={handleAdd}
-                        disabled={!ip}
-                    >
-                        Add
-                    </Button>
-                </Box>
-
-                <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
-                    {isLoading ? <CircularProgress size={20} /> : (
-                        (tab === 'block' ? rules?.blocked : rules?.allowed)?.map(item => (
-                            <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1, mb: 1, bgcolor: '#1a1a1a', borderRadius: 1 }}>
-                                <Box>
-                                    <Typography variant="body2" sx={{ fontFamily: 'monospace', color: tab === 'allow' ? '#00c853' : '#f50057' }}>{item.ip}</Typography>
-                                    <Typography variant="caption" sx={{ color: '#666' }}>{item.label || item.reason || 'No description'}</Typography>
-                                </Box>
-                                <IconButton size="small" onClick={() => deleteMutation.mutate(item.id)}>
-                                    <Delete fontSize="small" />
-                                </IconButton>
-                            </Box>
-                        ))
-                    )}
-                    {(!isLoading && (tab === 'block' ? rules?.blocked : rules?.allowed)?.length === 0) && (
-                        <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: '#666', mt: 2 }}>No rules found.</Typography>
-                    )}
-                </Box>
-            </CardContent>
-        </Card>
-    );
-}
 
 export default function Policy() {
     const queryClient = useQueryClient();
@@ -262,12 +158,9 @@ export default function Policy() {
                     </Card>
                 </Grid>
 
-                {/* 3. Access Control Rules (Whitelist / Blacklist) */}
-                <Grid item xs={12} md={6}>
-                    <AccessRulesManager />
-                </Grid>
+                {/* (Removed: Access Control Rules - now in dedicated SecurityRules page) */}
 
-                {/* 4. Next-Gen Tech */}
+                {/* 3. Next-Gen Tech */}
                 <Grid item xs={12} md={6}>
                     <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
                         <CardContent>
