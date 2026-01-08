@@ -86,9 +86,8 @@ func main() {
 
 	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
 
-	// Load MaxMind license key from DB if available
-	var settings models.SecuritySettings
-	if err := db.First(&settings, 1).Error; err == nil && settings.MaxMindLicenseKey != "" {
+	// Load MaxMind license key from DB if available (using settings fetched above)
+	if settings.MaxMindLicenseKey != "" {
 		system.Info("Loading MaxMind license key from database...")
 		geoipService.SetLicenseKey(settings.MaxMindLicenseKey)
 		go func() {
