@@ -187,6 +187,10 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySettings) (string, error) {
 	var sb strings.Builder
 
+	// Detect primary interface
+	sysInfo := NewSysInfoService()
+	eth := sysInfo.GetPrimaryInterface()
+
 	// ==========================================
 	// 1. Mangle Table (Advanced Packet Filter)
 	// ==========================================
@@ -216,25 +220,13 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// 1-4. Block Abnormal MSS
 		sb.WriteString("-A PREROUTING -p tcp -m conntrack --ctstate NEW -m tcpmss ! --mss 536:65535 -j DROP\n")
 
-		// 1-5. Block Fragments - REMOVED for Arma 3 Compatibility
-		// Arma 3 uses fragmented UDP packets for server details. Blocking this breaks server browser listings.
-		// sb.WriteString("-A PREROUTING -f -j DROP\n")
-
-		// 1-5a. Block UDP Reflection Attacks - MOVED/REMOVED
-		// ERROR: This blocked DNS responses (Source Port 53) because the server acts as a client.
-		// To fix: We only allow these if state is ESTABLISHED (handled by conntrack usually),
-		// but since this is Mangle/PreRouting, it hits before standard Input allow.
-		// Safest approach for now: Remove blind blocking of sport 53/123.
+		// 1-5a. Block UDP Reflection Attacks
 		sb.WriteString("-A PREROUTING -p udp -m multiport --sports 1900,11211 -j DROP\n")
 
 		// 1-5b. Block Bogon IPs (Spoofed IPs from local/reserved ranges) on WAN interface
-		sb.WriteString("-A PREROUTING -i eth0 -s 127.0.0.0/8 -j DROP\n")
-		sb.WriteString("-A PREROUTING -i eth0 -s 169.254.0.0/16 -j DROP\n")
-		sb.WriteString("-A PREROUTING -i eth0 -s 224.0.0.0/4 -j DROP\n")
-		// Extended Bogon (Private ranges that shouldn't appear on public internet/eth0)
-		// sb.WriteString("-A PREROUTING -i eth0 -s 192.168.0.0/16 -j DROP\n")
-		// sb.WriteString("-A PREROUTING -i eth0 -s 172.16.0.0/12 -j DROP\n")
-		// Note: We keep private ranges allowed for now to prevent accidental lockout if behind NAT/VPC.
+		sb.WriteString(fmt.Sprintf("-A PREROUTING -i %s -s 127.0.0.0/8 -j DROP\n", eth))
+		sb.WriteString(fmt.Sprintf("-A PREROUTING -i %s -s 169.254.0.0/16 -j DROP\n", eth))
+		sb.WriteString(fmt.Sprintf("-A PREROUTING -i %s -s 224.0.0.0/4 -j DROP\n", eth))
 
 		// 1-5g. Block Database Ports (No reason for external access)
 		sb.WriteString("-A PREROUTING -p tcp -m multiport --dports 1433,1521,3306,5432 -j DROP\n")
@@ -245,20 +237,16 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
 
 		// 1-5d. Block empty UDP packets (Length check)
-		// IP Header (20) + UDP Header (8) = 28 bytes. Anything <= 28 means no payload.
-		// Game packets always have payload.
 		sb.WriteString("-A PREROUTING -p udp -m length --length 0:28 -j DROP\n")
 
 		// 1-5e. TCP RST Flood Protection
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT\n")
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -j DROP\n")
 
-		// 1-5f. Block SYN-ACK Flood (Packets with SYN+ACK but no established connection)
+		// 1-5f. Block SYN-ACK Flood
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
 
 		// 1-5h. UDP Flood Protection (Per-IP Rate Limit)
-		// Limit each source IP to 120,000 packets/sec (approx 100Mbps for small packets).
-		// This is extremely high for a game but ensures no legitimate traffic is dropped.
 		sb.WriteString("-A PREROUTING -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 120000/sec --hashlimit-burst 240000 -j ACCEPT\n")
 		sb.WriteString("-A PREROUTING -p udp -j DROP\n")
 
@@ -346,7 +334,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	}
 
 	// Masquerade for WireGuard outbound
-	sb.WriteString("-A POSTROUTING -s 10.200.0.0/24 -o eth0 -j MASQUERADE\n")
+	sb.WriteString(fmt.Sprintf("-A POSTROUTING -s 10.200.0.0/24 -o %s -j MASQUERADE\n", eth))
 	sb.WriteString("COMMIT\n")
 
 	// ==========================================
@@ -383,8 +371,8 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// Forwarding rules (Critical for NAT)
 	// Allow forwarded traffic that passed Mangle checks
 	// Allow NEW connections from wg0 (Origin) to eth0 (Internet) for updates/APIs
-	sb.WriteString("-A FORWARD -i eth0 -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
-	sb.WriteString("-A FORWARD -i wg0 -o eth0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	sb.WriteString(fmt.Sprintf("-A FORWARD -i %s -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n", eth))
+	sb.WriteString(fmt.Sprintf("-A FORWARD -i wg0 -o %s -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n", eth))
 
 	sb.WriteString("COMMIT\n")
 

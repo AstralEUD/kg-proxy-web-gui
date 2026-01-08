@@ -285,3 +285,35 @@ func (s *SysInfoService) GetPublicIP() string {
 
 	return "0.0.0.0"
 }
+
+// GetPrimaryInterface returns the name of the primary network interface (e.g. eth0, ens3)
+func (s *SysInfoService) GetPrimaryInterface() string {
+	if runtime.GOOS != "linux" {
+		return "eth0"
+	}
+
+	data, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		return "eth0"
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		// Skip header lines and loopback
+		if !strings.Contains(line, ":") || strings.Contains(line, "lo:") || strings.Contains(line, "wg0:") {
+			continue
+		}
+
+		parts := strings.Split(line, ":")
+		if len(parts) < 1 {
+			continue
+		}
+
+		iface := strings.TrimSpace(parts[0])
+		if iface != "" {
+			return iface
+		}
+	}
+
+	return "eth0"
+}

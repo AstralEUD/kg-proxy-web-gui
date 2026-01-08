@@ -85,6 +85,21 @@ func main() {
 	}
 
 	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
+
+	// Load MaxMind license key from DB if available
+	var settings models.SecuritySettings
+	if err := db.First(&settings, 1).Error; err == nil && settings.MaxMindLicenseKey != "" {
+		system.Info("Loading MaxMind license key from database...")
+		geoipService.SetLicenseKey(settings.MaxMindLicenseKey)
+		go func() {
+			if err := geoipService.RefreshGeoIP(); err != nil {
+				system.Warn("Failed to load GeoIP database: %v", err)
+			} else {
+				system.Info("GeoIP database loaded from MaxMind")
+			}
+		}()
+	}
+
 	ebpfService := services.NewEBPFService()
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
 
