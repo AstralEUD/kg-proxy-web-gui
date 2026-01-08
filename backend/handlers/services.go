@@ -107,6 +107,12 @@ func (h *Handler) DeleteOrigin(c *fiber.Ctx) error {
 	h.DB.Where("origin_id = ?", id).Delete(&models.Service{})
 
 	// Delete associated WireGuard peer
+	var peer models.WireGuardPeer
+	if err := h.DB.Where("origin_id = ?", id).First(&peer).Error; err == nil {
+		if err := h.WG.RemovePeer(&peer); err != nil {
+			system.Warn("Failed to remove WireGuard peer from interface: %v", err)
+		}
+	}
 	h.DB.Where("origin_id = ?", id).Delete(&models.WireGuardPeer{})
 
 	// Delete origin

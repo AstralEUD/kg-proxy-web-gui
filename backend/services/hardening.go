@@ -13,6 +13,7 @@ func (s *FirewallService) ApplyHardening(level int) error {
 	// 1. Define Sysctl Rules based on documentation
 	sysctlRules := map[string]string{
 		// === SYN Flood Protection & High Throughput ===
+		"net.ipv4.ip_forward":          "1", // Enable Forwarding (Critical for VPN/Proxy)
 		"net.ipv4.tcp_syncookies":      "1",
 		"net.ipv4.tcp_max_syn_backlog": "65535", // Aggressive for 10Gbps
 		"net.ipv4.tcp_syn_retries":     "2",

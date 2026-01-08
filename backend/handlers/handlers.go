@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
+	"kg-proxy-web-gui/backend/system"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -61,6 +62,13 @@ func (h *Handler) CreateOrigin(c *fiber.Ctx) error {
 	}
 	tx.Commit()
 
+	// Apply Peer to WireGuard Interface
+	if err := h.WG.AddPeer(&peer); err != nil {
+		system.Error("Failed to add WireGuard peer for Origin %d: %v", origin.ID, err)
+	} else {
+		system.Info("Added WireGuard peer for Origin %d", origin.ID)
+	}
+
 	// Calculate AllowedIPs
 	sysInfo := services.NewSysInfoService()
 	vpsIP := sysInfo.GetPublicIP()
@@ -68,14 +76,16 @@ func (h *Handler) CreateOrigin(c *fiber.Ctx) error {
 
 	// Endpoint
 	endpoint := fmt.Sprintf("%s:51820", vpsIP)
+	serverPubKey := h.WG.GetServerPublicKey()
 
 	return c.Status(201).JSON(fiber.Map{
 		"origin": origin,
 		"wg_config": fiber.Map{
-			"private_key": priv,
-			"public_key":  pub,
-			"allowed_ips": allowedIPs,
-			"endpoint":    endpoint,
+			"private_key":       priv,
+			"public_key":        pub,
+			"server_public_key": serverPubKey,
+			"allowed_ips":       allowedIPs,
+			"endpoint":          endpoint,
 		},
 	})
 }
@@ -109,14 +119,16 @@ func (h *Handler) UpdateOrigin(c *fiber.Ctx) error {
 	vpsIP := sysInfo.GetPublicIP()
 	allowedIPs, _ := h.WG.GenerateAllowedIPs(vpsIP, "10.0.0.0/8")
 	endpoint := fmt.Sprintf("%s:51820", vpsIP)
+	serverPubKey := h.WG.GetServerPublicKey()
 
 	return c.JSON(fiber.Map{
 		"origin": origin,
 		"wg_config": fiber.Map{
-			"private_key": peer.PrivateKey,
-			"public_key":  peer.PublicKey,
-			"allowed_ips": allowedIPs,
-			"endpoint":    endpoint,
+			"private_key":       peer.PrivateKey,
+			"public_key":        peer.PublicKey,
+			"server_public_key": serverPubKey,
+			"allowed_ips":       allowedIPs,
+			"endpoint":          endpoint,
 		},
 	})
 }

@@ -255,3 +255,28 @@ func (s *WireGuardService) GetServerPublicKey() string {
 	// If failed (maybe interface down?), try reading config or return error
 	return "UNKNOWN_SERVER_KEY"
 }
+
+// AddPeer adds a peer to the running WireGuard interface
+func (s *WireGuardService) AddPeer(peer *models.WireGuardPeer) error {
+	if runtime.GOOS != "linux" {
+		return nil // No-op on Windows/Dev
+	}
+
+	// Client IP is calculated as 10.200.0.(ID+2)
+	clientIP := fmt.Sprintf("10.200.0.%d/32", peer.OriginID+2)
+
+	// command: wg set wg0 peer <PUBKEY> allowed-ips <IP/32>
+	_, err := s.Executor.Execute("wg", "set", "wg0", "peer", peer.PublicKey, "allowed-ips", clientIP)
+	return err
+}
+
+// RemovePeer removes a peer from the WireGuard interface
+func (s *WireGuardService) RemovePeer(peer *models.WireGuardPeer) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	// command: wg set wg0 peer <PUBKEY> remove
+	_, err := s.Executor.Execute("wg", "set", "wg0", "peer", peer.PublicKey, "remove")
+	return err
+}
