@@ -171,8 +171,9 @@ func main() {
 
 	// Services
 	protected.Get("/services", h.GetServices)
-	protected.Post("/services", h.CreateService)
-	protected.Delete("/services/:id", h.DeleteService)
+	api.Post("/services", h.CreateService)
+	api.Put("/services/:id", h.UpdateService)
+	api.Delete("/services/:id", h.DeleteService)
 
 	// Security Settings
 	protected.Get("/security/settings", h.GetSecuritySettings)

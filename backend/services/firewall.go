@@ -312,24 +312,46 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":OUTPUT ACCEPT [0:0]\n")
 	sb.WriteString(":POSTROUTING ACCEPT [0:0]\n")
 
-	// Get services from DB for DNAT rules
+	// Dynamic Port Forwarding Rules
 	var services []models.Service
 	s.DB.Preload("Origin").Preload("Ports").Find(&services)
 
 	for _, svc := range services {
+		// Only forward if Origin has WireGuard IP
 		if svc.Origin.WgIP == "" {
 			continue
 		}
 
-		// DNAT rules for dynamic service ports
-		// Pre-routing DNAT happens here.
-		// Note: Traffic has already passed Mangle PREROUTING checks.
 		for _, port := range svc.Ports {
-			if port.PublicPort > 0 && port.PrivatePort > 0 {
-				protocol := strings.ToLower(port.Protocol) // tcp or udp
-				sb.WriteString(fmt.Sprintf("-A PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d\n",
-					protocol, port.PublicPort, svc.Origin.WgIP, port.PrivatePort))
+			protocol := strings.ToLower(port.Protocol)
+
+			// Logic for Port Ranges
+			var dport, toDest string
+			if port.PublicPortEnd > port.PublicPort {
+				// Range (e.g. 27015:27030)
+				dport = fmt.Sprintf("%d:%d", port.PublicPort, port.PublicPortEnd)
+				// Target range matches source range if PrivatePortEnd is set,
+				// or we map to a starting private port?
+				// Usually user wants 27015-27030 -> 27015-27030
+				// iptables handles range mapping automatically if size matches.
+				toDest = fmt.Sprintf("%s:%d-%d", svc.Origin.WgIP, port.PrivatePort, port.PrivatePortEnd)
+
+				// Fallback if PrivatePortEnd is 0 (should prevent this in validation but handle here safe)
+				if port.PrivatePortEnd == 0 {
+					// Map range to single port? No, map range to range starting at PrivatePort
+					// Calculate end: PrivatePort + (PublicEnd - PublicStart)
+					diff := port.PublicPortEnd - port.PublicPort
+					toDest = fmt.Sprintf("%s:%d-%d", svc.Origin.WgIP, port.PrivatePort, port.PrivatePort+diff)
+				}
+			} else {
+				// Single Port
+				dport = fmt.Sprintf("%d", port.PublicPort)
+				toDest = fmt.Sprintf("%s:%d", svc.Origin.WgIP, port.PrivatePort)
 			}
+
+			// DNAT Rule
+			// -p udp --dport 2302 -j DNAT --to-destination 10.200.0.2:2302
+			sb.WriteString(fmt.Sprintf("-A PREROUTING -p %s --dport %s -j DNAT --to-destination %s\n", protocol, dport, toDest))
 		}
 	}
 

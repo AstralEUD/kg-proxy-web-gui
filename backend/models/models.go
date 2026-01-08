@@ -23,12 +23,16 @@ type Service struct {
 }
 
 type ServicePort struct {
-	ID          uint   `gorm:"primaryKey" json:"id"`
-	ServiceID   uint   `gorm:"not null" json:"service_id"`
-	Name        string `json:"name"` // e.g. "Game Port", "Query Port"
-	Protocol    string `gorm:"not null" json:"protocol"`
-	PublicPort  int    `gorm:"not null" json:"public_port"`
-	PrivatePort int    `gorm:"not null" json:"private_port"`
+	ID         uint   `gorm:"primaryKey" json:"id"`
+	ServiceID  uint   `gorm:"not null" json:"service_id"`
+	Name       string `json:"name"` // e.g. "Game Port", "Query Port"
+	Protocol   string `gorm:"not null" json:"protocol"`
+	PublicPort int    `gorm:"not null" json:"public_port"`
+	// For Ranges (e.g. 27015-27030): PublicPort=27015, PublicPortEnd=27030
+	// For Single: PublicPort=27015, PublicPortEnd=0
+	PublicPortEnd  int `gorm:"default:0" json:"public_port_end"`
+	PrivatePort    int `gorm:"not null" json:"private_port"`
+	PrivatePortEnd int `gorm:"default:0" json:"private_port_end"`
 }
 
 type AllowForeign struct {

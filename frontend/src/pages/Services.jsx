@@ -5,15 +5,18 @@ import {
     Paper, Chip, IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions,
     TextField, FormControl, InputLabel, Select, MenuItem, Grid, CircularProgress
 } from '@mui/material';
-import { Add as AddIcon, Edit, Delete, PlayArrow, Stop, Gamepad } from '@mui/icons-material';
+import { Add as AddIcon, Edit, Delete, Gamepad } from '@mui/icons-material';
 import client from '../api/client';
 
 export default function Services() {
     const [open, setOpen] = useState(false);
+    const [editMode, setEditMode] = useState(false);
+    const [editId, setEditId] = useState(null);
+
     const [formData, setFormData] = useState({
         name: '',
         origin_id: '',
-        ports: [{ name: 'Game Port', protocol: 'UDP', public_port: 2302, private_port: 2302 }]
+        ports: [{ name: 'Game Port', protocol: 'UDP', public_port_display: '2302', private_port_display: '2302' }]
     });
     const queryClient = useQueryClient();
 
@@ -40,12 +43,16 @@ export default function Services() {
         mutationFn: (data) => client.post('/services', data),
         onSuccess: () => {
             queryClient.invalidateQueries(['services']);
-            setOpen(false);
-            setFormData({
-                name: '',
-                origin_id: '',
-                ports: [{ name: 'Game Port', protocol: 'UDP', public_port: 2302, private_port: 2302 }]
-            });
+            handleClose();
+        },
+    });
+
+    // Update mutation
+    const updateMutation = useMutation({
+        mutationFn: ({ id, data }) => client.put(`/services/${id}`, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries(['services']);
+            handleClose();
         },
     });
 
@@ -55,24 +62,89 @@ export default function Services() {
         onSuccess: () => queryClient.invalidateQueries(['services']),
     });
 
+    const handleClose = () => {
+        setOpen(false);
+        setEditMode(false);
+        setEditId(null);
+        setFormData({
+            name: '',
+            origin_id: '',
+            ports: [{ name: 'Game Port', protocol: 'UDP', public_port_display: '2302', private_port_display: '2302' }]
+        });
+    };
+
+    const handleEdit = (service) => {
+        setEditMode(true);
+        setEditId(service.id);
+
+        // Transform ports for display (combine start/end)
+        const portsForDisplay = service.ports.map(p => ({
+            name: p.name,
+            protocol: p.protocol,
+            public_port_display: p.public_port_end > 0 && p.public_port_end > p.public_port
+                ? `${p.public_port}-${p.public_port_end}`
+                : `${p.public_port}`,
+            private_port_display: p.private_port_end > 0 && p.private_port_end > p.private_port
+                ? `${p.private_port}-${p.private_port_end}`
+                : `${p.private_port}`
+        }));
+
+        setFormData({
+            name: service.name,
+            origin_id: service.origin_id,
+            ports: portsForDisplay
+        });
+        setOpen(true);
+    };
+
+    const parsePortString = (str) => {
+        if (!str) return { start: 0, end: 0 };
+        const parts = str.toString().split('-');
+        const start = parseInt(parts[0]);
+        if (isNaN(start)) return { start: 0, end: 0 };
+
+        if (parts.length > 1) {
+            const end = parseInt(parts[1]);
+            return { start, end: isNaN(end) ? 0 : end };
+        }
+        return { start, end: 0 };
+    };
+
     const handleSubmit = () => {
         const payload = {
             name: formData.name,
             origin_id: parseInt(formData.origin_id),
-            ports: formData.ports.map(p => ({
-                name: p.name,
-                protocol: p.protocol,
-                public_port: parseInt(p.public_port),
-                private_port: parseInt(p.private_port)
-            }))
+            ports: formData.ports.map(p => {
+                const pub = parsePortString(p.public_port_display);
+                const priv = parsePortString(p.private_port_display);
+
+                // Smart range filling: if private is single but public is range, allow it (implicit mapping)
+                // But usually we want explicit mapping. 
+                // If user types "27015-27030" for public and "27015" for private, 
+                // backend logic handles end calculation if PrivateEnd is 0? No, backend logic handles missing PrivateEnd.
+
+                return {
+                    name: p.name,
+                    protocol: p.protocol,
+                    public_port: pub.start,
+                    public_port_end: pub.end,
+                    private_port: priv.start,
+                    private_port_end: priv.end
+                };
+            })
         };
-        createMutation.mutate(payload);
+
+        if (editMode) {
+            updateMutation.mutate({ id: editId, data: payload });
+        } else {
+            createMutation.mutate(payload);
+        }
     };
 
     const handleAddPort = () => {
         setFormData({
             ...formData,
-            ports: [...formData.ports, { name: 'New Port', protocol: 'UDP', public_port: 0, private_port: 0 }]
+            ports: [...formData.ports, { name: 'New Port', protocol: 'UDP', public_port_display: '', private_port_display: '' }]
         });
     };
 
@@ -91,6 +163,10 @@ export default function Services() {
     const getOriginName = (originId) => {
         const origin = origins?.find(o => o.id === originId);
         return origin?.name || `Origin-${originId}`;
+    };
+
+    const formatPort = (start, end) => {
+        return (end > 0 && end > start) ? `${start}-${end}` : `${start}`;
     };
 
     return (
@@ -172,9 +248,13 @@ export default function Services() {
                                                             color: p.protocol === 'UDP' ? '#ff9800' : '#2196f3'
                                                         }}
                                                     />
-                                                    <code style={{ color: '#00e5ff', fontSize: 12 }}>{p.public_port}</code>
+                                                    <code style={{ color: '#00e5ff', fontSize: 12 }}>
+                                                        {formatPort(p.public_port, p.public_port_end)}
+                                                    </code>
                                                     <span style={{ color: '#666', fontSize: 10 }}>➞</span>
-                                                    <code style={{ color: '#aaa', fontSize: 12 }}>{p.private_port}</code>
+                                                    <code style={{ color: '#aaa', fontSize: 12 }}>
+                                                        {formatPort(p.private_port, p.private_port_end)}
+                                                    </code>
                                                     {p.name && <span style={{ color: '#666', fontSize: 10 }}>({p.name})</span>}
                                                 </Box>
                                             ))}
@@ -184,6 +264,15 @@ export default function Services() {
                                         {new Date(service.created_at).toLocaleDateString()}
                                     </TableCell>
                                     <TableCell align="right">
+                                        <Tooltip title="Edit">
+                                            <IconButton
+                                                size="small"
+                                                sx={{ color: '#00e5ff', mr: 1 }}
+                                                onClick={() => handleEdit(service)}
+                                            >
+                                                <Edit />
+                                            </IconButton>
+                                        </Tooltip>
                                         <Tooltip title="Delete">
                                             <IconButton
                                                 size="small"
@@ -201,9 +290,11 @@ export default function Services() {
                 </TableContainer>
             )}
 
-            {/* Add Service Dialog */}
-            <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
-                <DialogTitle sx={{ color: '#00e5ff' }}>Add New Service</DialogTitle>
+            {/* Add/Edit Service Dialog */}
+            <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
+                <DialogTitle sx={{ color: '#00e5ff' }}>
+                    {editMode ? 'Edit Service' : 'Add New Service'}
+                </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
                         <TextField
@@ -227,7 +318,7 @@ export default function Services() {
                             </Select>
                         </FormControl>
 
-                        <Typography variant="subtitle2" sx={{ color: '#888', mt: 2 }}>Port Forwarding Rules</Typography>
+                        <Typography variant="subtitle2" sx={{ color: '#888', mt: 2 }}>Port Forwarding Rules (Supports Ranges e.g. 27015-27030)</Typography>
                         <Box sx={{ maxHeight: 300, overflowY: 'auto', pr: 1 }}>
                             {formData.ports.map((port, index) => (
                                 <Grid container spacing={1} key={index} sx={{ mb: 1, alignItems: 'center' }}>
@@ -245,11 +336,11 @@ export default function Services() {
                                     <Grid item xs={3}>
                                         <TextField
                                             label="Public (VPS)"
-                                            type="number"
                                             size="small"
                                             fullWidth
-                                            value={port.public_port}
-                                            onChange={(e) => handlePortChange(index, 'public_port', parseInt(e.target.value))}
+                                            value={port.public_port_display}
+                                            onChange={(e) => handlePortChange(index, 'public_port_display', e.target.value)}
+                                            placeholder="2302 or 2300-2400"
                                             sx={{ bgcolor: '#0a0a0a' }}
                                         />
                                     </Grid>
@@ -257,11 +348,11 @@ export default function Services() {
                                     <Grid item xs={3}>
                                         <TextField
                                             label="Private (Origin)"
-                                            type="number"
                                             size="small"
                                             fullWidth
-                                            value={port.private_port}
-                                            onChange={(e) => handlePortChange(index, 'private_port', parseInt(e.target.value))}
+                                            value={port.private_port_display}
+                                            onChange={(e) => handlePortChange(index, 'private_port_display', e.target.value)}
+                                            placeholder="2302 or 2300-2400"
                                             sx={{ bgcolor: '#0a0a0a' }}
                                         />
                                     </Grid>
@@ -295,14 +386,14 @@ export default function Services() {
                     </Box>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setOpen(false)}>Cancel</Button>
+                    <Button onClick={handleClose}>Cancel</Button>
                     <Button
                         variant="contained"
                         onClick={handleSubmit}
-                        disabled={!formData.name || !formData.origin_id || createMutation.isPending}
+                        disabled={!formData.name || !formData.origin_id || createMutation.isPending || updateMutation.isPending}
                         sx={{ background: 'linear-gradient(45deg, #00e5ff, #00b8d4)', color: '#000' }}
                     >
-                        {createMutation.isPending ? 'Creating...' : 'Create Service'}
+                        {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editMode ? 'Update Service' : 'Create Service')}
                     </Button>
                 </DialogActions>
             </Dialog>
