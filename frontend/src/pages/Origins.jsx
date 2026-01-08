@@ -29,7 +29,7 @@ PrivateKey = ${peerInfo?.private_key || '<PRIVATE_KEY_HIDDEN>'}
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = ${peerInfo?.public_key || serverInfo?.wireguard_public_key || '<VPS_PUBLIC_KEY>'}
+PublicKey = ${peerInfo?.server_public_key || serverInfo?.wireguard_public_key || '<VPS_PUBLIC_KEY>'}
 Endpoint = ${endpoint}
 AllowedIPs = ${allowedIPs}
 PersistentKeepalive = 25`;

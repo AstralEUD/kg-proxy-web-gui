@@ -280,8 +280,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A PREROUTING -j GEO_GUARD\n")
 	sb.WriteString("-A GEO_GUARD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n")
 
-	// Exempt management ports from GEO_GUARD to prevent lockout
+	// Exempt management ports and WireGuard from GEO_GUARD to prevent lockout and allow VPN entry
 	sb.WriteString("-A GEO_GUARD -p tcp -m multiport --dports 22,80,443,8080 -j RETURN\n")
+	sb.WriteString("-A GEO_GUARD -p udp --dport 51820 -j RETURN\n")
 
 	// Steam Query Bypass (A2S_INFO, A2S_PLAYER, A2S_RULES)
 	// Signatures: T (54), U (55), V (56). Payload start around byte 28 (20 IP + 8 UDP).
