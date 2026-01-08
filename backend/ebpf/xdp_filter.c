@@ -10,11 +10,13 @@
 #include <bpf/bpf_endian.h>
 
 // Packet statistics per source IP
+// Packet statistics per source IP
 struct packet_stats {
     __u64 packets;
     __u64 bytes;
     __u64 last_seen;
     __u32 blocked;
+    __u32 pad; // Explicit padding to match 64-bit alignment and satisfy verifier
 };
 
 // BPF map to store per-IP statistics
@@ -114,6 +116,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             .bytes = pkt_size,
             .last_seen = bpf_ktime_get_ns(),
             .blocked = 0,
+            .pad = 0, // Initialize padding
         };
         bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
     }
