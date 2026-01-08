@@ -305,6 +305,8 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	sb.WriteString("-A GEO_GUARD -m set --match-set white_list src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set ban src -j DROP\n")
+	sb.WriteString("-A GEO_GUARD -m set --match-set vpn_proxy src -j DROP\n")
+	sb.WriteString("-A GEO_GUARD -m set --match-set tor_exits src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")
 	// Drop everything else that didn't match ALLOW sets
