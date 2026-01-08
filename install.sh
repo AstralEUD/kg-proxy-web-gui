@@ -145,6 +145,9 @@ RestartSec=5
 User=root
 Environment=GIN_MODE=release
 Environment=KG_DATA_DIR=$DATA_DIR
+# Optional: Set your MaxMind license key for accurate GeoIP filtering
+# Get a free key at: https://www.maxmind.com/en/geolite2/signup
+# Environment=MAXMIND_LICENSE_KEY=your_license_key_here
 LimitNOFILE=65535
 StartLimitInterval=0
 

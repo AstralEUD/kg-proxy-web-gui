@@ -26,5 +26,6 @@ type SecuritySettings struct {
 	SmartBanning      bool      `gorm:"default:false" json:"smart_banning"`
 	SteamQueryBypass  bool      `gorm:"default:true" json:"steam_query_bypass"` // Allow Steam A2S queries globally
 	EBPFEnabled       bool      `gorm:"default:false" json:"ebpf_enabled"`
+	MaxMindLicenseKey string    `json:"maxmind_license_key,omitempty"` // MaxMind GeoLite2 license key
 	UpdatedAt         time.Time `json:"updated_at"`
 }

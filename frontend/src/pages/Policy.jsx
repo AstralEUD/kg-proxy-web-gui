@@ -292,6 +292,43 @@ export default function Policy() {
                                     <Switch checked={settings.smart_banning} onChange={handleChange('smart_banning')} color="success" />
                                 </CardContent>
                             </Card>
+
+                            <Divider sx={{ my: 2, bgcolor: '#333' }} />
+
+                            {/* MaxMind License Key */}
+                            <Box sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
+                                    <Public sx={{ mr: 1, fontSize: 18, color: '#00e5ff' }} />
+                                    MaxMind GeoLite2 License Key
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: '#888', display: 'block', mb: 1 }}>
+                                    정확한 GeoIP 차단을 위해 MaxMind 라이선스 키가 필요합니다.
+                                    <span style={{ color: '#00c853' }}> 무료</span>로 발급받을 수 있습니다.
+                                </Typography>
+                                <Alert severity="info" sx={{ mb: 2, bgcolor: '#001e3c', '& .MuiAlert-icon': { color: '#00e5ff' } }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>라이선스 키 발급 방법</Typography>
+                                    <Typography variant="caption" component="div">
+                                        1. <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener noreferrer" style={{ color: '#90caf9' }}>maxmind.com/en/geolite2/signup</a> 접속<br />
+                                        2. 무료 계정 생성 (이메일 인증 필요)<br />
+                                        3. 로그인 후 "Manage License Keys" → "Generate new license key" 클릭<br />
+                                        4. 생성된 키를 아래에 입력
+                                    </Typography>
+                                </Alert>
+                                <TextField
+                                    fullWidth
+                                    size="small"
+                                    type="password"
+                                    placeholder="Enter MaxMind License Key"
+                                    value={settings.maxmind_license_key || ''}
+                                    onChange={(e) => {
+                                        queryClient.setQueryData(['security-settings'], (old) => ({
+                                            ...old,
+                                            maxmind_license_key: e.target.value
+                                        }));
+                                    }}
+                                    sx={{ bgcolor: '#0a0a0a', '& .MuiOutlinedInput-root': { color: '#fff' } }}
+                                />
+                            </Box>
                         </CardContent>
                     </Card>
                 </Grid>

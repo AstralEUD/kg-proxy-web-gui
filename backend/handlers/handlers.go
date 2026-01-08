@@ -63,10 +63,10 @@ func (h *Handler) CreateOrigin(c *fiber.Ctx) error {
 	tx.Commit()
 
 	// Apply Peer to WireGuard Interface
-	if err := h.WG.AddPeer(&peer); err != nil {
+	if err := h.WG.AddPeer(&peer, origin.WgIP); err != nil {
 		system.Error("Failed to add WireGuard peer for Origin %d: %v", origin.ID, err)
 	} else {
-		system.Info("Added WireGuard peer for Origin %d", origin.ID)
+		system.Info("Added WireGuard peer for Origin %d with IP %s", origin.ID, origin.WgIP)
 	}
 
 	// Calculate AllowedIPs

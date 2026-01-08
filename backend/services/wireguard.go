@@ -313,13 +313,16 @@ func (s *WireGuardService) GetServerPublicKey() string {
 }
 
 // AddPeer adds a peer to the running WireGuard interface
-func (s *WireGuardService) AddPeer(peer *models.WireGuardPeer) error {
+func (s *WireGuardService) AddPeer(peer *models.WireGuardPeer, wgIP string) error {
 	if runtime.GOOS != "linux" {
 		return nil // No-op on Windows/Dev
 	}
 
-	// Client IP is calculated as 10.200.0.(ID+2)
-	clientIP := fmt.Sprintf("10.200.0.%d/32", peer.OriginID+2)
+	// Use the Origin's WgIP directly (e.g., "10.200.0.2")
+	clientIP := wgIP
+	if !strings.Contains(clientIP, "/") {
+		clientIP = clientIP + "/32"
+	}
 
 	// command: wg set wg0 peer <PUBKEY> allowed-ips <IP/32>
 	_, err := s.Executor.Execute("wg", "set", "wg0", "peer", peer.PublicKey, "allowed-ips", clientIP)

@@ -120,6 +120,10 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 	// Add GeoIP allowed countries
 	if s.GeoIP != nil {
 		allowedCountries := strings.Split(settings.GeoAllowCountries, ",")
+
+		// Download country CIDRs if needed
+		s.GeoIP.DownloadCountryCIDRs(allowedCountries)
+
 		for _, country := range allowedCountries {
 			country = strings.TrimSpace(country)
 			if country == "" {
@@ -127,24 +131,23 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 			}
 
 			// Get IP ranges for this country
-			if ranges, ok := s.GeoIP.countryRanges[country]; ok {
-				for _, ipRange := range ranges {
-					sb.WriteString(fmt.Sprintf("add geo_allowed %s\n", ipRange.String()))
-				}
+			cidrs := s.GeoIP.GetCountryCIDRs(country)
+			for _, cidr := range cidrs {
+				sb.WriteString(fmt.Sprintf("add geo_allowed %s\n", cidr))
 			}
 		}
 	}
 
 	// Add VPN/Proxy ranges if blocking enabled
 	if settings.BlockVPN && s.GeoIP != nil {
-		for _, vpnRange := range s.GeoIP.vpnRanges {
+		for _, vpnRange := range s.GeoIP.GetVPNRanges() {
 			sb.WriteString(fmt.Sprintf("add vpn_proxy %s\n", vpnRange.String()))
 		}
 	}
 
 	// Add TOR exit nodes if blocking enabled
 	if settings.BlockTOR && s.GeoIP != nil {
-		for _, torIP := range s.GeoIP.torExitNodes {
+		for _, torIP := range s.GeoIP.GetTORExitNodes() {
 			sb.WriteString(fmt.Sprintf("add tor_exits %s\n", torIP.String()))
 		}
 	}

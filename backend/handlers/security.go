@@ -46,6 +46,7 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		SmartBanning      bool     `json:"smart_banning"`
 		SteamQueryBypass  bool     `json:"steam_query_bypass"`
 		EBPFEnabled       bool     `json:"ebpf_enabled"`
+		MaxMindLicenseKey string   `json:"maxmind_license_key"`
 		BlockedIPs        []string `json:"blocked_ips"`
 	}
 
@@ -70,6 +71,7 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	settings.SmartBanning = input.SmartBanning
 	settings.SteamQueryBypass = input.SteamQueryBypass
 	settings.EBPFEnabled = input.EBPFEnabled
+	settings.MaxMindLicenseKey = input.MaxMindLicenseKey
 
 	// Save to DB
 	if result.Error != nil {
