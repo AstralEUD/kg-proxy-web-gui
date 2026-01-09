@@ -110,6 +110,24 @@ export default function Origins() {
     const handleOpenCreate = () => {
         setEditMode(false);
         setEditId(null);
+
+        // Auto-generate defaults for Create mode
+        const name = getNextOriginName(origins);
+        const usedSuffixes = origins?.map(o => parseInt(o.wg_ip.split('.')[3])) || [];
+        let nextSuffix = 2;
+        while (usedSuffixes.includes(nextSuffix)) {
+            nextSuffix++;
+        }
+        const wgIp = `10.200.0.${nextSuffix}`;
+
+        setFormData({
+            name: name,
+            wg_ip: wgIp,
+            reforger_game_port: 20001,
+            reforger_browser_port: 17777,
+            reforger_a2s_port: 27016
+        });
+
         setActiveStep(0);
         setOpen(true);
     };
@@ -132,15 +150,8 @@ export default function Origins() {
         if (editMode) {
             updateMutation.mutate({ id: editId, data: formData });
         } else {
-            // Auto generate for create
-            const name = getNextOriginName(origins);
-            const usedSuffixes = origins?.map(o => parseInt(o.wg_ip.split('.')[3])) || [];
-            let nextSuffix = 2;
-            while (usedSuffixes.includes(nextSuffix)) {
-                nextSuffix++;
-            }
-            const wgIp = `10.200.0.${nextSuffix}`;
-            createMutation.mutate({ name, wg_ip: wgIp });
+            // Use user-defined values from form
+            createMutation.mutate({ name: formData.name, wg_ip: formData.wg_ip });
         }
     };
 
@@ -191,7 +202,7 @@ export default function Origins() {
                         fontWeight: 'bold',
                     }}
                 >
-                    One-Click Origin
+                    Create Origin
                 </Button>
             </Box>
 
@@ -264,7 +275,7 @@ export default function Origins() {
             {/* Dialog */}
             <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#111', borderRadius: 2 } }}>
                 <DialogTitle sx={{ color: '#00e5ff', pb: 1 }}>
-                    {editMode ? 'Edit Origin Server' : '⚡ One-Click Origin Setup'}
+                    {editMode ? 'Edit Origin Server' : 'Create Origin Server'}
                 </DialogTitle>
                 <DialogContent>
                     <Stepper activeStep={activeStep} sx={{ mb: 3, pt: 1 }}>
@@ -276,34 +287,25 @@ export default function Origins() {
                         <Box sx={{ textAlign: 'center', py: 2 }}>
                             {!editMode && <CloudQueue sx={{ fontSize: 60, color: '#00e5ff', mb: 2 }} />}
 
-                            {editMode ? (
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-                                    <TextField
-                                        label="Name"
-                                        size="small"
-                                        value={formData.name}
-                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                        sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
-                                    />
-                                    <TextField
-                                        label="WireGuard IP (Internal)"
-                                        size="small"
-                                        value={formData.wg_ip}
-                                        onChange={(e) => setFormData({ ...formData, wg_ip: e.target.value })}
-                                        sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
-                                    />
-                                    <Typography variant="caption" color="textSecondary" sx={{ textAlign: 'left' }}>
-                                        Services and Ports are now configured in the 'Services' menu.
-                                    </Typography>
-                                </Box>
-                            ) : (
-                                <>
-                                    <Typography variant="body1" gutterBottom>Ready to create a new Origin?</Typography>
-                                    <Typography variant="caption" color="textSecondary">
-                                        Name and IP ({serverInfo?.public_ip || 'Loading...'}) will be auto-assigned.
-                                    </Typography>
-                                </>
-                            )}
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                                <TextField
+                                    label="Name"
+                                    size="small"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                />
+                                <TextField
+                                    label="WireGuard IP (Internal)"
+                                    size="small"
+                                    value={formData.wg_ip}
+                                    onChange={(e) => setFormData({ ...formData, wg_ip: e.target.value })}
+                                    sx={{ bgcolor: '#1a1a1a', input: { color: '#fff' }, label: { color: '#888' } }}
+                                />
+                                <Typography variant="caption" color="textSecondary" sx={{ textAlign: 'left' }}>
+                                    Services and Ports are now configured in the 'Services' menu.
+                                </Typography>
+                            </Box>
 
                             <Box sx={{ mt: 3 }}>
                                 <Button
