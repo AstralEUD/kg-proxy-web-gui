@@ -3,7 +3,6 @@
 package services
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net"
 	"runtime"
@@ -214,7 +213,7 @@ func (e *EBPFService) UpdateGeoIPData() error {
 		return nil
 	}
 
-	system.Info("Populating GeoIP BPF map...")
+	// system.Info("Populating GeoIP BPF map...")
 	count := 0
 
 	allCIDRs := e.geoIPService.GetAllCountryCIDRs()
@@ -238,18 +237,17 @@ func (e *EBPFService) UpdateGeoIPData() error {
 				continue
 			}
 
-			// Use BigEndian to match network byte order in BPF
-			ipUint := binary.BigEndian.Uint32(ip)
+			// Use byte array for raw order to match network byte order in BPF
 			ones, _ := ipNet.Mask.Size()
 
 			// LPM Trie Key
 			key := struct {
 				PrefixLen uint32
-				Data      uint32
+				Data      [4]byte // Use [4]byte to ensure byte-perfect order
 			}{
 				PrefixLen: uint32(ones),
-				Data:      ipUint,
 			}
+			copy(key.Data[:], ip.To4())
 
 			if err := objs.GeoAllowed.Put(key, countryCode); err != nil {
 				system.Warn("Failed to add IP to geo_allowed map: %v", err)
@@ -265,7 +263,9 @@ func (e *EBPFService) UpdateGeoIPData() error {
 		}
 	}
 
-	system.Info("Populated GeoIP map with %d entries", count)
+	if count > 0 {
+		system.Info("GeoIP BPF map update: %d CIDRs loaded", count)
+	}
 	return nil
 }
 
