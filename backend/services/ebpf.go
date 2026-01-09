@@ -203,8 +203,8 @@ func (e *EBPFService) detectInterface() (*net.Interface, error) {
 	return nil, fmt.Errorf("no suitable network interface found")
 }
 
-// populateGeoIPMap populates the geo_allowed BPF map
-func (e *EBPFService) populateGeoIPMap() error {
+// UpdateGeoIPData populates the geo_allowed BPF map
+func (e *EBPFService) UpdateGeoIPData() error {
 	if e.objs == nil || e.geoIPService == nil {
 		return nil
 	}
