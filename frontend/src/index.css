@@ -73,3 +73,116 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* Mobile Responsive Styles */
+@media (max-width: 960px) {
+
+  /* Adjust sidebar width on tablets */
+  .MuiDrawer-paper {
+    width: 200px !important;
+  }
+
+  /* Reduce padding on main content */
+  main {
+    padding: 16px !important;
+  }
+}
+
+@media (max-width: 600px) {
+
+  /* Full width sidebar overlay on mobile */
+  .MuiDrawer-paperPermanent {
+    display: none !important;
+  }
+
+  /* Reduce typography on mobile */
+  h4 {
+    font-size: 1.5rem !important;
+  }
+
+  h6 {
+    font-size: 1rem !important;
+  }
+
+  /* Compact cards on mobile */
+  .MuiCard-root {
+    margin-bottom: 12px;
+  }
+
+  .MuiCardContent-root {
+    padding: 12px !important;
+  }
+
+  /* Tables horizontal scroll on mobile */
+  .MuiTableContainer-root {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .MuiTable-root {
+    min-width: 600px;
+  }
+
+  /* Smaller chips on mobile */
+  .MuiChip-root {
+    font-size: 0.7rem !important;
+    height: 24px !important;
+  }
+
+  /* Stack buttons vertically on mobile */
+  .MuiBox-root>.MuiButton-root {
+    margin-bottom: 8px;
+  }
+
+  /* Adjust grid items to full width on mobile */
+  .MuiGrid-item {
+    max-width: 100% !important;
+    flex-basis: 100% !important;
+  }
+}
+
+/* Touch-friendly adjustments */
+@media (pointer: coarse) {
+
+  /* Larger touch targets */
+  .MuiListItemButton-root {
+    min-height: 48px;
+  }
+
+  .MuiSwitch-root {
+    padding: 12px;
+  }
+
+  .MuiTableRow-root {
+    height: 52px;
+  }
+}
+
+/* Improve table readability on all devices */
+.MuiTableCell-root {
+  white-space: nowrap;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Hide scrollbar but keep functionality */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

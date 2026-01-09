@@ -11,6 +11,7 @@ import Policy from './pages/Policy';
 import Traffic from './pages/Traffic';
 import Users from './pages/Users';
 import SecurityRules from './pages/SecurityRules';
+import AttackHistory from './pages/AttackHistory';
 import Login from './pages/Login';
 import { isAuthenticated } from './api/client';
 
@@ -65,6 +66,7 @@ function App() {
               <Route path="traffic" element={<Traffic />} />
               <Route path="policy" element={<Policy />} />
               <Route path="security/rules" element={<SecurityRules />} />
+              <Route path="attacks" element={<AttackHistory />} />
               <Route path="users" element={<Users />} />
             </Route>
           </Routes>

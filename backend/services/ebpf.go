@@ -11,9 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
 
 	"github.com/cilium/ebpf/link"
+	"gorm.io/gorm"
 )
 
 //go:generate bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" xdp ../ebpf/xdp_filter.c -- -I/usr/include/x86_64-linux-gnu
@@ -46,6 +48,16 @@ type EBPFService struct {
 
 	// Boot time for timestamp conversion
 	bootTime time.Time
+
+	// Database for snapshots
+	db *gorm.DB
+
+	// For snapshot calculations
+	lastSnapshot       time.Time
+	prevNetworkRX      int64
+	prevNetworkTX      int64
+	prevTotalPackets   int64
+	prevBlockedPackets int64
 }
 
 func NewEBPFService() *EBPFService {
@@ -70,17 +82,23 @@ func NewEBPFService() *EBPFService {
 	boot = GetBootTime()
 
 	return &EBPFService{
-		enabled:     false,
-		trafficData: make([]TrafficEntry, 0),
-		stopChan:    make(chan struct{}),
-		ifaceName:   "eth0",
-		bootTime:    boot,
+		enabled:      false,
+		trafficData:  make([]TrafficEntry, 0),
+		stopChan:     make(chan struct{}),
+		ifaceName:    "eth0",
+		bootTime:     boot,
+		lastSnapshot: time.Now(),
 	}
 }
 
 // SetGeoIPService sets the GeoIP service for country lookups
 func (e *EBPFService) SetGeoIPService(geoip *GeoIPService) {
 	e.geoIPService = geoip
+}
+
+// SetDatabase sets the database reference for snapshot storage
+func (e *EBPFService) SetDatabase(db *gorm.DB) {
+	e.db = db
 }
 
 // Enable starts eBPF monitoring
@@ -306,6 +324,120 @@ func (e *EBPFService) readEBPFMaps() {
 	if err := iter.Err(); err != nil {
 		system.Warn("Error iterating ip_stats map: %v", err)
 	}
+
+	// Save periodic snapshot (every 1 minute)
+	e.saveTrafficSnapshot()
+}
+
+// saveTrafficSnapshot saves traffic statistics to the database for historical analysis
+func (e *EBPFService) saveTrafficSnapshot() {
+	if e.db == nil {
+		return
+	}
+
+	now := time.Now()
+	if now.Sub(e.lastSnapshot) < 1*time.Minute {
+		return
+	}
+
+	// Calculate current totals
+	var totalPackets, blockedPackets int64
+	var totalBytes int64
+	countryCount := make(map[string]int)
+
+	for _, entry := range e.trafficData {
+		totalPackets += int64(entry.PacketCount)
+		totalBytes += entry.ByteCount
+		if entry.Blocked {
+			blockedPackets += int64(entry.PacketCount)
+		}
+		countryCount[entry.CountryCode]++
+	}
+
+	// Calculate PPS (packets per second) based on time elapsed
+	elapsed := now.Sub(e.lastSnapshot).Seconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+
+	// Calculate delta from previous snapshot
+	deltaTotalPackets := totalPackets - e.prevTotalPackets
+	deltaBlockedPackets := blockedPackets - e.prevBlockedPackets
+	if deltaTotalPackets < 0 {
+		deltaTotalPackets = totalPackets // Reset occurred
+	}
+	if deltaBlockedPackets < 0 {
+		deltaBlockedPackets = blockedPackets
+	}
+
+	totalPPS := int64(float64(deltaTotalPackets) / elapsed)
+	blockedPPS := int64(float64(deltaBlockedPackets) / elapsed)
+	allowedPPS := totalPPS - blockedPPS
+	if allowedPPS < 0 {
+		allowedPPS = 0
+	}
+
+	// Get network stats
+	sysInfo := NewSysInfoService()
+	rxBytes, txBytes := sysInfo.GetNetworkIO()
+	networkRX := int64(float64(rxBytes-uint64(e.prevNetworkRX)) / elapsed)
+	networkTX := int64(float64(txBytes-uint64(e.prevNetworkTX)) / elapsed)
+	if networkRX < 0 {
+		networkRX = 0
+	}
+	if networkTX < 0 {
+		networkTX = 0
+	}
+
+	// Find top country
+	topCountry := "XX"
+	maxCount := 0
+	for country, count := range countryCount {
+		if count > maxCount {
+			maxCount = count
+			topCountry = country
+		}
+	}
+
+	// Create snapshot
+	snapshot := models.TrafficSnapshot{
+		Timestamp:   now,
+		TotalPPS:    totalPPS,
+		TotalBPS:    int64(float64(totalBytes) / elapsed),
+		AllowedPPS:  allowedPPS,
+		BlockedPPS:  blockedPPS,
+		UniqueIPs:   len(e.trafficData),
+		TopCountry:  topCountry,
+		NetworkRX:   networkRX,
+		NetworkTX:   networkTX,
+		CPUUsage:    sysInfo.GetCPUUsage(),
+		MemoryUsage: sysInfo.GetMemoryUsage(),
+	}
+
+	// Save to database
+	if err := e.db.Create(&snapshot).Error; err != nil {
+		system.Warn("Failed to save traffic snapshot: %v", err)
+	}
+
+	// Update previous values for next calculation
+	e.lastSnapshot = now
+	e.prevTotalPackets = totalPackets
+	e.prevBlockedPackets = blockedPackets
+	e.prevNetworkRX = int64(rxBytes)
+	e.prevNetworkTX = int64(txBytes)
+
+	// Cleanup old snapshots (older than 7 days)
+	e.cleanupOldSnapshots()
+}
+
+// cleanupOldSnapshots removes traffic snapshots older than 7 days
+func (e *EBPFService) cleanupOldSnapshots() {
+	if e.db == nil {
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -7)
+	e.db.Where("timestamp < ?", cutoff).Delete(&models.TrafficSnapshot{})
 }
 
 // Disable stops eBPF monitoring
@@ -427,4 +559,238 @@ func (e *EBPFService) UpdateGeoAllowed(allowedCountries []string) error {
 
 	system.Info("Updated geo-allowed countries: %v", allowedCountries)
 	return nil
+}
+
+// UpdateAllowIPs updates the white_list BPF map
+func (e *EBPFService) UpdateAllowIPs(ips []string) error {
+	if e.objs == nil {
+		return nil // Not in eBPF mode
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
+	// Simple approach: Clear map (if possible) or just add new.
+	// Since we don't track old keys here easily, we rely on handlers to pass full list?
+	// Or we just add. For deletion, we might need a full overwrite or explicit delete.
+	// Assuming `ips` is the FULL list of allowed IPs.
+
+	// Better approach for full sync: read all keys, diff, or nuke and rebuild.
+	// HASH map doesn't support "Clear".
+	// We will just add for now. Proper sync requires more code.
+	// Let's iterate and delete all first? Expensive if large.
+	// Given manual whitelist is usually small (<100), iterate-delete is fine.
+
+	var key [4]byte
+	var value uint32
+	var keysToDelete [][4]byte
+
+	iter := objs.WhiteList.Iterate()
+	for iter.Next(&key, &value) {
+		keysToDelete = append(keysToDelete, key)
+	}
+
+	for _, k := range keysToDelete {
+		objs.WhiteList.Delete(k)
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		ipUint := ipToUint32(ip)
+		val := uint32(1)
+
+		if err := objs.WhiteList.Put(ipUint, val); err != nil {
+			system.Warn("Failed to add whitelist IP %s: %v", ipStr, err)
+		}
+	}
+
+	system.Info("Updated whitelist in eBPF map: %d entries", len(ips))
+	return nil
+}
+
+// ResetTrafficStats clears all traffic statistics from eBPF maps and memory
+func (e *EBPFService) ResetTrafficStats() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// 1. Clear local cache
+	e.trafficData = make([]TrafficEntry, 0)
+
+	// 2. Clear eBPF Map (ip_stats)
+	if e.objs != nil {
+		objs, ok := e.objs.(*xdpObjects)
+		if ok {
+			// Iterate and delete all keys
+			// Note: Deleting while iterating can be tricky in some kernels/implementations,
+			// but for hash maps it's generally supported or we collect keys first.
+			// Ideally, we could just close and recreate the map, but that requires reloading the program or using map-in-map.
+			// Simple approach: Delete keys one by one.
+
+			var key [4]byte
+			var value PacketStats
+			var keysToDelete [][4]byte
+
+			iter := objs.IpStats.Iterate()
+			for iter.Next(&key, &value) {
+				keysToDelete = append(keysToDelete, key)
+			}
+			if err := iter.Err(); err != nil {
+				system.Warn("Error iterating ip_stats for reset: %v", err)
+			}
+
+			count := 0
+			for _, k := range keysToDelete {
+				if err := objs.IpStats.Delete(k); err != nil {
+					// Ignore non-exist errors
+					continue
+				}
+				count++
+			}
+			system.Info("Reset traffic stats: cleared %d entries from eBPF map", count)
+		}
+	} else {
+		system.Info("Reset traffic stats: memory only (eBPF not active)")
+	}
+
+	return nil
+}
+
+// StartAutoResetLoop starts the background task to reset stats periodically
+func (e *EBPFService) StartAutoResetLoop(db *gorm.DB) {
+	// Initialize the channel if not already (should be done in Enable/New, but safe guard)
+	if e.stopChan == nil {
+		e.stopChan = make(chan struct{})
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-e.stopChan:
+				return
+			case <-ticker.C:
+				var settings models.SecuritySettings
+				if err := db.First(&settings, 1).Error; err != nil {
+					continue
+				}
+
+				if settings.TrafficStatsResetInterval <= 0 {
+					continue
+				}
+
+				// If never reset before, set to now to start the cycle
+				if settings.LastTrafficStatsReset == nil {
+					now := time.Now()
+					settings.LastTrafficStatsReset = &now
+					db.Save(&settings)
+					continue
+				}
+
+				// Check interval
+				interval := time.Duration(settings.TrafficStatsResetInterval) * time.Hour
+				if time.Since(*settings.LastTrafficStatsReset) >= interval {
+					system.Info("Auto-resetting traffic stats (Interval: %dh)", settings.TrafficStatsResetInterval)
+					e.ResetTrafficStats()
+
+					now := time.Now()
+					settings.LastTrafficStatsReset = &now
+					db.Save(&settings)
+				}
+			}
+		}
+	}()
+}
+
+// PortStats represents per-port traffic statistics
+type PortStats struct {
+	Port    uint16 `json:"port"`
+	Packets uint64 `json:"packets"`
+	Bytes   uint64 `json:"bytes"`
+}
+
+// UpdateConfig updates the eBPF config map with current settings
+func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
+	if e.objs == nil {
+		return nil
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
+	// Config map indices
+	const (
+		configHardBlocking = uint32(0)
+		configRateLimitPPS = uint32(1)
+	)
+
+	// Set hard blocking mode
+	hardBlockVal := uint32(0)
+	if hardBlocking {
+		hardBlockVal = 1
+	}
+	if err := objs.Config.Put(configHardBlocking, hardBlockVal); err != nil {
+		system.Warn("Failed to update hard blocking config: %v", err)
+	}
+
+	// Set rate limit PPS
+	rateLimitVal := uint32(rateLimitPPS)
+	if err := objs.Config.Put(configRateLimitPPS, rateLimitVal); err != nil {
+		system.Warn("Failed to update rate limit config: %v", err)
+	}
+
+	system.Info("Updated eBPF config: hard_blocking=%v, rate_limit_pps=%d", hardBlocking, rateLimitPPS)
+	return nil
+}
+
+// GetPortStats returns per-port traffic statistics
+func (e *EBPFService) GetPortStats() []PortStats {
+	if e.objs == nil {
+		return nil
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
+	var stats []PortStats
+	var key uint16
+	var value struct {
+		Packets uint64
+		Bytes   uint64
+	}
+
+	iter := objs.PortStats.Iterate()
+	for iter.Next(&key, &value) {
+		stats = append(stats, PortStats{
+			Port:    key,
+			Packets: value.Packets,
+			Bytes:   value.Bytes,
+		})
+
+		// Limit
+		if len(stats) >= 100 {
+			break
+		}
+	}
+
+	// Sort by packets descending
+	for i := 0; i < len(stats); i++ {
+		for j := i + 1; j < len(stats); j++ {
+			if stats[j].Packets > stats[i].Packets {
+				stats[i], stats[j] = stats[j], stats[i]
+			}
+		}
+	}
+
+	return stats
 }

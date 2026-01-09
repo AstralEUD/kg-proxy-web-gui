@@ -37,17 +37,30 @@ func (h *Handler) GetSecuritySettings(c *fiber.Ctx) error {
 // UpdateSecuritySettings - Update security settings
 func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	var input struct {
-		GlobalProtection  bool     `json:"global_protection"`
-		BlockVPN          bool     `json:"block_vpn"`
-		BlockTOR          bool     `json:"block_tor"`
-		SYNCookies        bool     `json:"syn_cookies"`
-		ProtectionLevel   int      `json:"protection_level"`
-		GeoAllowCountries []string `json:"geo_allow_countries"`
-		SmartBanning      bool     `json:"smart_banning"`
-		SteamQueryBypass  bool     `json:"steam_query_bypass"`
-		EBPFEnabled       bool     `json:"ebpf_enabled"`
-		MaxMindLicenseKey string   `json:"maxmind_license_key"`
-		BlockedIPs        []string `json:"blocked_ips"`
+		GlobalProtection          bool     `json:"global_protection"`
+		BlockVPN                  bool     `json:"block_vpn"`
+		BlockTOR                  bool     `json:"block_tor"`
+		SYNCookies                bool     `json:"syn_cookies"`
+		ProtectionLevel           int      `json:"protection_level"`
+		GeoAllowCountries         []string `json:"geo_allow_countries"`
+		SmartBanning              bool     `json:"smart_banning"`
+		SteamQueryBypass          bool     `json:"steam_query_bypass"`
+		EBPFEnabled               bool     `json:"ebpf_enabled"`
+		TrafficStatsResetInterval int      `json:"traffic_stats_reset_interval"`
+		MaxMindLicenseKey         string   `json:"maxmind_license_key"`
+		BlockedIPs                []string `json:"blocked_ips"`
+		// XDP Settings
+		XDPHardBlocking bool `json:"xdp_hard_blocking"`
+		XDPRateLimitPPS int  `json:"xdp_rate_limit_pps"`
+		// Discord Webhook
+		DiscordWebhookURL string `json:"discord_webhook_url"`
+		AlertOnAttack     bool   `json:"alert_on_attack"`
+		AlertOnBlock      bool   `json:"alert_on_block"`
+		// IP Intelligence
+		IPIntelligenceEnabled bool   `json:"ip_intelligence_enabled"`
+		IPIntelligenceAPIKey  string `json:"ip_intelligence_api_key"`
+		// Data Retention
+		AttackHistoryDays int `json:"attack_history_days"`
 	}
 
 	if err := c.BodyParser(&input); err != nil {
@@ -71,7 +84,22 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	settings.SmartBanning = input.SmartBanning
 	settings.SteamQueryBypass = input.SteamQueryBypass
 	settings.EBPFEnabled = input.EBPFEnabled
+	settings.TrafficStatsResetInterval = input.TrafficStatsResetInterval
 	settings.MaxMindLicenseKey = input.MaxMindLicenseKey
+	// XDP Settings
+	settings.XDPHardBlocking = input.XDPHardBlocking
+	settings.XDPRateLimitPPS = input.XDPRateLimitPPS
+	// Discord Webhook
+	settings.DiscordWebhookURL = input.DiscordWebhookURL
+	settings.AlertOnAttack = input.AlertOnAttack
+	settings.AlertOnBlock = input.AlertOnBlock
+	// IP Intelligence
+	settings.IPIntelligenceEnabled = input.IPIntelligenceEnabled
+	settings.IPIntelligenceAPIKey = input.IPIntelligenceAPIKey
+	// Data Retention
+	if input.AttackHistoryDays > 0 {
+		settings.AttackHistoryDays = input.AttackHistoryDays
+	}
 
 	// Save to DB
 	if result.Error != nil {
@@ -119,7 +147,40 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		go h.Firewall.ApplyRules()
 	}
 
+	// Update Webhook Service
+	if h.Webhook != nil {
+		h.Webhook.SetWebhookURL(settings.DiscordWebhookURL)
+	}
+
+	// Update eBPF Config (XDP settings)
+	if h.EBPF != nil {
+		h.EBPF.UpdateConfig(settings.XDPHardBlocking, settings.XDPRateLimitPPS)
+	}
+
 	return c.JSON(fiber.Map{"message": "Settings applied successfully", "settings": settings})
+}
+
+// TestWebhook sends a test notification to the configured Discord webhook
+func (h *Handler) TestWebhook(c *fiber.Ctx) error {
+	if h.Webhook == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"error": "Webhook service not available"})
+	}
+
+	// Get webhook URL from DB in case it was just updated
+	var settings models.SecuritySettings
+	if err := h.DB.First(&settings, 1).Error; err == nil && settings.DiscordWebhookURL != "" {
+		h.Webhook.SetWebhookURL(settings.DiscordWebhookURL)
+	}
+
+	if !h.Webhook.IsEnabled() {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Discord webhook URL not configured"})
+	}
+
+	if err := h.Webhook.SendTestAlert(); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "Test notification sent successfully"})
 }
 
 // GetIPRules returns all allow/block rules
@@ -149,6 +210,18 @@ func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
 	if h.Firewall != nil {
 		go h.Firewall.ApplyRules()
 	}
+
+	// Update eBPF whitelist
+	if h.EBPF != nil {
+		var allAllowed []models.AllowIP
+		h.DB.Find(&allAllowed)
+		var ips []string
+		for _, a := range allAllowed {
+			ips = append(ips, a.IP)
+		}
+		go h.EBPF.UpdateAllowIPs(ips)
+	}
+
 	return c.JSON(input)
 }
 
@@ -162,6 +235,18 @@ func (h *Handler) DeleteAllowIP(c *fiber.Ctx) error {
 	if h.Firewall != nil {
 		go h.Firewall.ApplyRules()
 	}
+
+	// Update eBPF whitelist
+	if h.EBPF != nil {
+		var allAllowed []models.AllowIP
+		h.DB.Find(&allAllowed)
+		var ips []string
+		for _, a := range allAllowed {
+			ips = append(ips, a.IP)
+		}
+		go h.EBPF.UpdateAllowIPs(ips)
+	}
+
 	return c.JSON(fiber.Map{"success": true})
 }
 

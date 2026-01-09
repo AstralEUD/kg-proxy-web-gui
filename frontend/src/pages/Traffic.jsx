@@ -3,10 +3,11 @@ import {
     Box, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
     TextField, InputAdornment, Chip, Grid, Card, CardContent, TablePagination, TableSortLabel,
     MenuItem, Select, FormControl, InputLabel, CircularProgress, Button, Dialog, DialogTitle,
-    DialogContent, DialogActions, Paper
+    DialogContent, DialogActions, Paper, ToggleButton, ToggleButtonGroup
 } from '@mui/material';
-import { Search, Speed, FilterList, Router, Dns, Security } from '@mui/icons-material';
+import { Search, Speed, FilterList, Router, Dns, Security, TrendingUp } from '@mui/icons-material';
 import { ServicePipe, WorldMap2D } from '../components/Visualizations';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } from 'recharts';
 import client from '../api/client';
 
 export default function Traffic() {
@@ -24,6 +25,33 @@ export default function Traffic() {
     const [backendStats, setBackendStats] = useState({ connections: 0, uptime: '-', mock_mode: true, required_ports: [] });
     const [loading, setLoading] = useState(true);
     const [portsOpen, setPortsOpen] = useState(false);
+
+    // Traffic History Chart
+    const [historyData, setHistoryData] = useState([]);
+    const [historyRange, setHistoryRange] = useState('1h');
+
+    // Fetch traffic history
+    useEffect(() => {
+        const fetchHistory = async () => {
+            try {
+                const res = await client.get(`/traffic/history?range=${historyRange}`);
+                if (res.data.history) {
+                    setHistoryData(res.data.history.map(h => ({
+                        ...h,
+                        time: new Date(h.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+                        allowed_pps: h.allowed_pps || 0,
+                        blocked_pps: h.blocked_pps || 0,
+                        total_pps: h.total_pps || 0,
+                    })));
+                }
+            } catch (err) {
+                console.error("Failed to fetch traffic history:", err);
+            }
+        };
+        fetchHistory();
+        const interval = setInterval(fetchHistory, 60000); // Update every minute
+        return () => clearInterval(interval);
+    }, [historyRange]);
 
     // Fetch real backend status and eBPF traffic data
     useEffect(() => {
@@ -110,6 +138,61 @@ export default function Traffic() {
                     passedCount={filteredData.filter(d => d.status === 'allowed').length}
                 />
             </Box>
+
+            {/* Traffic History Chart */}
+            <Card sx={{ bgcolor: '#111', border: '1px solid #222', mb: 3 }}>
+                <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6" sx={{ color: '#fff', display: 'flex', alignItems: 'center' }}>
+                            <TrendingUp sx={{ mr: 1, color: '#00e5ff' }} /> Traffic History
+                        </Typography>
+                        <ToggleButtonGroup
+                            size="small"
+                            value={historyRange}
+                            exclusive
+                            onChange={(e, val) => val && setHistoryRange(val)}
+                            sx={{ '& .MuiToggleButton-root': { color: '#888', borderColor: '#333' }, '& .Mui-selected': { bgcolor: '#00e5ff20', color: '#00e5ff' } }}
+                        >
+                            <ToggleButton value="1h">1H</ToggleButton>
+                            <ToggleButton value="6h">6H</ToggleButton>
+                            <ToggleButton value="24h">24H</ToggleButton>
+                            <ToggleButton value="7d">7D</ToggleButton>
+                        </ToggleButtonGroup>
+                    </Box>
+
+                    {historyData.length === 0 ? (
+                        <Box sx={{ height: 250, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Typography color="textSecondary">No historical data available yet. Data is collected every minute.</Typography>
+                        </Box>
+                    ) : (
+                        <ResponsiveContainer width="100%" height={250}>
+                            <AreaChart data={historyData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorAllowed" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#00e5ff" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="#00e5ff" stopOpacity={0} />
+                                    </linearGradient>
+                                    <linearGradient id="colorBlocked" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#f50057" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="#f50057" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                                <XAxis dataKey="time" stroke="#666" tick={{ fill: '#888', fontSize: 11 }} />
+                                <YAxis stroke="#666" tick={{ fill: '#888', fontSize: 11 }} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: 8 }}
+                                    labelStyle={{ color: '#fff' }}
+                                    formatter={(value, name) => [value.toLocaleString() + ' PPS', name === 'allowed_pps' ? 'Allowed' : 'Blocked']}
+                                />
+                                <Legend wrapperStyle={{ color: '#888' }} formatter={(value) => value === 'allowed_pps' ? 'Allowed' : 'Blocked'} />
+                                <Area type="monotone" dataKey="allowed_pps" stroke="#00e5ff" fillOpacity={1} fill="url(#colorAllowed)" />
+                                <Area type="monotone" dataKey="blocked_pps" stroke="#f50057" fillOpacity={1} fill="url(#colorBlocked)" />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    )}
+                </CardContent>
+            </Card>
 
             {/* Flex Container for Map & Filters */}
             <Box sx={{ display: 'flex', gap: 3, flexDirection: { xs: 'column', lg: 'row' }, mb: 3 }}>

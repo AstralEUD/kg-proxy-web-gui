@@ -13,7 +13,7 @@ const eventIcons = {
 
 export default function Dashboard() {
     const [trafficData, setTrafficData] = useState([]);
-    const [stats, setStats] = useState({ connections: 0, blocked: 0, origins: 0, cpu: 0, memory: 0, disk: 0 });
+    const [stats, setStats] = useState({ connections: 0, blocked: 0, origins: 0, cpu: 0, memory: 0, disk: 0, network_rx: 0, network_tx: 0 });
     const [events, setEvents] = useState([]);
     const [requiredPorts, setRequiredPorts] = useState([]);
     const [firewallRules, setFirewallRules] = useState('');
@@ -34,6 +34,8 @@ export default function Dashboard() {
                 cpu: data.cpu_usage || 0,
                 memory: data.memory_usage || 0,
                 disk: data.disk_usage || 0,
+                network_rx: data.network_rx || 0,
+                network_tx: data.network_tx || 0,
             });
             setEvents(data.events || []);
             setRequiredPorts(data.required_ports || []);

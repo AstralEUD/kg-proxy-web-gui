@@ -2,8 +2,12 @@ package services
 
 import (
 	"fmt"
+	"kg-proxy-web-gui/backend/models"
+	"kg-proxy-web-gui/backend/system"
 	"sync"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // FloodProtection implements rate limiting and DDoS mitigation
@@ -13,6 +17,11 @@ type FloodProtection struct {
 	mu            sync.RWMutex
 	cleanupTicker *time.Ticker
 	stopChan      chan struct{}
+
+	// Service references for logging and notifications
+	db      *gorm.DB
+	webhook *WebhookService
+	geoip   *GeoIPService
 }
 
 type ConnectionTracker struct {
@@ -38,6 +47,15 @@ func NewFloodProtection(level int) *FloodProtection {
 	go fp.cleanupRoutine()
 
 	return fp
+}
+
+// SetServices connects external services for logging and notifications
+func (fp *FloodProtection) SetServices(db *gorm.DB, webhook *WebhookService, geoip *GeoIPService) {
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	fp.db = db
+	fp.webhook = webhook
+	fp.geoip = geoip
 }
 
 // CheckIP returns true if IP should be blocked
@@ -81,6 +99,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 			if tracker.Violations >= thresholds.MaxViolations {
 				tracker.Blocked = true
 				tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
+				go fp.recordAttack(ip, "Connection Flood", int(tracker.PacketsPerSec))
 				return true
 			}
 		}
@@ -93,6 +112,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 		if tracker.Violations >= thresholds.MaxViolations {
 			tracker.Blocked = true
 			tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
+			go fp.recordAttack(ip, "PPS Flood", tracker.PacketsPerSec)
 			return true
 		}
 	}
@@ -104,6 +124,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 		if tracker.Violations >= thresholds.MaxViolations {
 			tracker.Blocked = true
 			tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
+			go fp.recordAttack(ip, "Bandwidth Flood", tracker.PacketsPerSec)
 			return true
 		}
 	}
@@ -182,6 +203,44 @@ func (fp *FloodProtection) UnblockIP(ip string) {
 	if tracker, exists := fp.ipConnections[ip]; exists {
 		tracker.Blocked = false
 		tracker.Violations = 0
+	}
+}
+
+// recordAttack logs attack event to DB and sends webhook alert
+// This should be called as a goroutine to avoid blocking the main packet processing path
+func (fp *FloodProtection) recordAttack(ip string, attackType string, pps int) {
+	// 1. Resolve Country
+	countryName := "Unknown"
+	countryCode := "XX"
+	if fp.geoip != nil {
+		countryName, countryCode = fp.geoip.GetCountry(ip)
+	}
+
+	// 2. Log to Database
+	if fp.db != nil {
+		event := models.AttackEvent{
+			Timestamp:   time.Now(),
+			SourceIP:    ip,
+			CountryCode: countryCode,
+			CountryName: countryName,
+			AttackType:  attackType,
+			PPS:         pps,
+			Action:      "blocked",
+		}
+
+		// Use a new goroutine for DB write to be extra safe against locking, though db calls are usually thread-safe
+		if err := fp.db.Create(&event).Error; err != nil {
+			system.Warn("Failed to log attack event: %v", err)
+		}
+	} else {
+		system.Warn("Attack detected but DB not connected: %s (%s)", ip, attackType)
+	}
+
+	// 3. Send Webhook Alert
+	if fp.webhook != nil {
+		// Use default alert settings (true/true) or read from config if we had access to settings here
+		// For now, we assume if webhook is set, we want alerts
+		fp.webhook.SendAttackAlert(ip, countryName, attackType, pps, "Blocked via Flood Protection")
 	}
 }
 

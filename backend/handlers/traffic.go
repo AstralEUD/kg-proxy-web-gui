@@ -41,6 +41,25 @@ func (h *Handler) GetTrafficData(c *fiber.Ctx) error {
 	})
 }
 
+// ResetTrafficStats manually resets traffic statistics
+func (h *Handler) ResetTrafficStats(c *fiber.Ctx) error {
+	if h.EBPF == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "eBPF service not initialized",
+		})
+	}
+
+	if err := h.EBPF.ResetTrafficStats(); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": fmt.Sprintf("Failed to reset stats: %v", err),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Traffic statistics reset successfully",
+	})
+}
+
 func getCountryName(code string) string {
 	countryMap := map[string]string{
 		"KR": "South Korea", "US": "United States", "CN": "China", "JP": "Japan",
@@ -85,4 +104,23 @@ func calculateRiskScore(entry services.TrafficEntry) int {
 		score = 100
 	}
 	return score
+}
+
+// GetPortStats returns per-destination-port traffic statistics
+func (h *Handler) GetPortStats(c *fiber.Ctx) error {
+	if h.EBPF == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "eBPF service not initialized",
+		})
+	}
+
+	stats := h.EBPF.GetPortStats()
+	if stats == nil {
+		stats = []services.PortStats{}
+	}
+
+	return c.JSON(fiber.Map{
+		"ports": stats,
+		"count": len(stats),
+	})
 }

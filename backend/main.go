@@ -45,7 +45,19 @@ func main() {
 	// Migrate
 	// Migrate
 	// CRITICAL: Ensure schema is up to date. Panic if migration fails.
-	if err := db.AutoMigrate(&models.Origin{}, &models.Service{}, &models.ServicePort{}, &models.AllowForeign{}, &models.BanIP{}, &models.AllowIP{}, &models.WireGuardPeer{}, &models.Admin{}, &models.SecuritySettings{}); err != nil {
+	if err := db.AutoMigrate(
+		&models.Origin{},
+		&models.Service{},
+		&models.ServicePort{},
+		&models.AllowForeign{},
+		&models.BanIP{},
+		&models.AllowIP{},
+		&models.WireGuardPeer{},
+		&models.Admin{},
+		&models.SecuritySettings{},
+		&models.TrafficSnapshot{},
+		&models.AttackEvent{},
+	); err != nil {
 		system.Error("Database migration failed: %v", err)
 		log.Fatalf("CRITICAL: Database migration failed. Application cannot start: %v", err)
 	}
@@ -57,6 +69,7 @@ func main() {
 
 	// Initialize GeoIP service
 	geoipService := services.NewGeoIPService()
+	geoipService.StartAutoUpdateScheduler() // Start weekly auto-refresh
 	system.Info("GeoIP service initialized")
 
 	// Initialize Flood Protection
@@ -99,8 +112,15 @@ func main() {
 		}()
 	}
 
+	// Set IP Intelligence API Key
+	if settings.IPIntelligenceAPIKey != "" {
+		geoipService.SetIPInfoAPIKey(settings.IPIntelligenceAPIKey)
+		system.Info("IP Intelligence API Key configured")
+	}
+
 	ebpfService := services.NewEBPFService()
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
+	ebpfService.SetDatabase(db)               // Connect DB for traffic snapshots
 
 	// Always try to enable eBPF XDP monitoring
 	// CRITICAL: Fail if eBPF cannot be loaded
@@ -112,8 +132,26 @@ func main() {
 		system.Info("eBPF XDP monitoring enabled successfully")
 	}
 
+	// Start traffic stats auto-reset loop
+	ebpfService.StartAutoResetLoop(db)
+
+	// Apply saved eBPF configuration
+	if ebpfService.IsEnabled() {
+		ebpfService.UpdateConfig(settings.XDPHardBlocking, settings.XDPRateLimitPPS)
+	}
+
+	// Initialize Webhook Service
+	webhookService := services.NewWebhookService()
+	if settings.DiscordWebhookURL != "" {
+		webhookService.SetWebhookURL(settings.DiscordWebhookURL)
+		system.Info("Discord webhook configured")
+	}
+
+	// Connect dependencies for Flood Protection (Logging & Alerts)
+	floodProtect.SetServices(db, webhookService, geoipService)
+
 	// 3. Setup Handlers
-	h := handlers.NewHandler(db, wgService, fwService, ebpfService)
+	h := handlers.NewHandler(db, wgService, fwService, ebpfService, webhookService)
 
 	// 4. Initial Firewall Application
 	// This ensures management ports are open even if the DB was empty
@@ -189,6 +227,20 @@ func main() {
 
 	// Traffic Data (eBPF)
 	protected.Get("/traffic/data", h.GetTrafficData)
+	protected.Post("/traffic/reset", h.ResetTrafficStats)
+	protected.Get("/traffic/history", h.GetTrafficHistory)
+	protected.Get("/traffic/ports", h.GetPortStats)
+
+	// Attack History
+	protected.Get("/attacks", h.GetAttackHistory)
+	protected.Get("/attacks/stats", h.GetAttackStats)
+
+	// Webhook
+	protected.Post("/webhook/test", h.TestWebhook)
+
+	// Backup & Restore
+	protected.Get("/backup/export", h.ExportConfig)
+	protected.Post("/backup/import", h.ImportConfig)
 
 	// Server Info (Public IP, etc.)
 	protected.Get("/server/info", h.GetServerInfo)

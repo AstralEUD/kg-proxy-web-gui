@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, Alert, Snackbar, CircularProgress } from '@mui/material';
+import { Box, Typography, Card, CardContent, Grid, Switch, FormControlLabel, Button, Slider, Chip, Divider, TextField, Alert, Snackbar, CircularProgress, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
 import { Shield, Public, GppGood, Bolt, CheckCircle } from '@mui/icons-material';
 import client from '../api/client';
 
@@ -221,6 +221,222 @@ export default function Policy() {
                                     }}
                                     sx={{ bgcolor: '#0a0a0a', '& .MuiOutlinedInput-root': { color: '#fff' } }}
                                 />
+                            </Box>
+
+                            <Divider sx={{ my: 2, bgcolor: '#333' }} />
+
+                            {/* Traffic Stats Maintenance */}
+                            <Box sx={{ mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', mb: 1 }}>
+                                    <Bolt sx={{ mr: 1, fontSize: 18, color: '#00e5ff' }} />
+                                    Traffic Statistics Maintenance
+                                </Typography>
+
+                                <Grid container spacing={2} alignItems="center">
+                                    <Grid item xs={8}>
+                                        <FormControl fullWidth size="small" sx={{ bgcolor: '#0a0a0a' }}>
+                                            <InputLabel sx={{ color: '#888' }}>Auto-Reset Interval</InputLabel>
+                                            <Select
+                                                value={settings.traffic_stats_reset_interval || 0}
+                                                label="Auto-Reset Interval"
+                                                onChange={(e) => {
+                                                    queryClient.setQueryData(['security-settings'], (old) => ({
+                                                        ...old,
+                                                        traffic_stats_reset_interval: e.target.value
+                                                    }));
+                                                }}
+                                                sx={{ color: '#fff', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444' } }}
+                                            >
+                                                <MenuItem value={0}>Disabled</MenuItem>
+                                                <MenuItem value={1}>Every 1 Hour</MenuItem>
+                                                <MenuItem value={6}>Every 6 Hours</MenuItem>
+                                                <MenuItem value={12}>Every 12 Hours</MenuItem>
+                                                <MenuItem value={24}>Every 24 Hours</MenuItem>
+                                            </Select>
+                                        </FormControl>
+                                    </Grid>
+                                    <Grid item xs={4}>
+                                        <Button
+                                            variant="outlined"
+                                            color="warning"
+                                            fullWidth
+                                            onClick={async () => {
+                                                if (confirm('Are you sure you want to reset all traffic statistics? This cannot be undone.')) {
+                                                    try {
+                                                        await client.post('/traffic/reset');
+                                                        setNotification({ open: true, message: 'Traffic statistics reset successfully' });
+                                                    } catch (err) {
+                                                        alert('Failed to reset: ' + err.message);
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            Reset Now
+                                        </Button>
+                                    </Grid>
+                                </Grid>
+                            </Box>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* 5. XDP Advanced Settings */}
+                <Grid item xs={12} md={6}>
+                    <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
+                        <CardContent>
+                            <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
+                                <Bolt sx={{ mr: 1, color: '#ff9800' }} /> XDP Advanced Settings
+                            </Typography>
+
+                            <Card variant="outlined" sx={{ mb: 2, bgcolor: settings.xdp_hard_blocking ? '#ff980010' : 'transparent', borderColor: settings.xdp_hard_blocking ? '#ff9800' : '#333' }}>
+                                <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <Box>
+                                            <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 'bold' }}>Hard Blocking Mode</Typography>
+                                            <Typography variant="caption" sx={{ color: '#888' }}>Drop packets at kernel level (faster, more aggressive)</Typography>
+                                        </Box>
+                                        <Switch checked={settings.xdp_hard_blocking || false} onChange={handleChange('xdp_hard_blocking')} color="warning" />
+                                    </Box>
+                                    {settings.xdp_hard_blocking && (
+                                        <Alert severity="warning" sx={{ mt: 1, py: 0 }}>GeoIP 위반 트래픽이 커널에서 즉시 폐기됩니다.</Alert>
+                                    )}
+                                </CardContent>
+                            </Card>
+
+                            <Typography variant="subtitle2" sx={{ color: '#888', mb: 1 }}>Per-IP Rate Limit (PPS)</Typography>
+                            <Box sx={{ px: 2 }}>
+                                <Slider
+                                    value={settings.xdp_rate_limit_pps || 0}
+                                    onChange={handleSlider('xdp_rate_limit_pps')}
+                                    min={0}
+                                    max={100000}
+                                    step={1000}
+                                    valueLabelDisplay="auto"
+                                    marks={[
+                                        { value: 0, label: 'Off' },
+                                        { value: 30000, label: '30K' },
+                                        { value: 100000, label: '100K' }
+                                    ]}
+                                    sx={{ color: '#ff9800' }}
+                                />
+                                <Typography variant="caption" sx={{ color: '#666' }}>
+                                    {settings.xdp_rate_limit_pps === 0 ? 'Rate limiting disabled' : `Max ${(settings.xdp_rate_limit_pps || 0).toLocaleString()} packets/second per IP`}
+                                </Typography>
+                            </Box>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* 6. Discord Webhook Notifications */}
+                <Grid item xs={12} md={6}>
+                    <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
+                        <CardContent>
+                            <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
+                                🔔 Discord Webhook Notifications
+                            </Typography>
+
+                            <TextField
+                                fullWidth
+                                label="Discord Webhook URL"
+                                value={settings.discord_webhook_url || ''}
+                                onChange={(e) => queryClient.setQueryData(['security-settings'], old => ({ ...old, discord_webhook_url: e.target.value }))}
+                                placeholder="https://discord.com/api/webhooks/..."
+                                size="small"
+                                sx={{ mb: 2, bgcolor: '#0a0a0a', '& .MuiOutlinedInput-root': { '& fieldset': { borderColor: '#333' } }, '& .MuiInputLabel-root': { color: '#888' }, '& .MuiInputBase-input': { color: '#fff' } }}
+                            />
+
+                            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                                <FormControlLabel
+                                    control={<Switch checked={settings.alert_on_attack} onChange={handleChange('alert_on_attack')} color="error" />}
+                                    label="Attack Alerts"
+                                    sx={{ color: '#fff' }}
+                                />
+                                <FormControlLabel
+                                    control={<Switch checked={settings.alert_on_block || false} onChange={handleChange('alert_on_block')} color="warning" />}
+                                    label="Block Alerts"
+                                    sx={{ color: '#fff' }}
+                                />
+                            </Box>
+
+                            <Button
+                                variant="outlined"
+                                color="info"
+                                onClick={async () => {
+                                    try {
+                                        await client.post('/webhook/test');
+                                        setNotification({ open: true, message: 'Test notification sent to Discord!' });
+                                    } catch (err) {
+                                        alert('Failed to send test: ' + (err.response?.data?.error || err.message));
+                                    }
+                                }}
+                                disabled={!settings.discord_webhook_url}
+                            >
+                                Send Test Notification
+                            </Button>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* 7. Backup & Restore */}
+                <Grid item xs={12} md={6}>
+                    <Card sx={{ bgcolor: '#111', border: '1px solid #222', height: '100%' }}>
+                        <CardContent>
+                            <Typography variant="h6" sx={{ color: '#fff', mb: 2, display: 'flex', alignItems: 'center' }}>
+                                💾 Backup & Restore
+                            </Typography>
+
+                            <Typography variant="body2" sx={{ color: '#888', mb: 2 }}>
+                                Export all configuration (Origins, Services, Security Settings, IP Rules) to a JSON file for backup or migration.
+                            </Typography>
+
+                            <Box sx={{ display: 'flex', gap: 2 }}>
+                                <Button
+                                    variant="contained"
+                                    color="primary"
+                                    onClick={async () => {
+                                        try {
+                                            const res = await client.get('/backup/export');
+                                            const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = `kg-proxy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                                            a.click();
+                                            URL.revokeObjectURL(url);
+                                            setNotification({ open: true, message: 'Configuration exported successfully!' });
+                                        } catch (err) {
+                                            alert('Export failed: ' + err.message);
+                                        }
+                                    }}
+                                >
+                                    Export Config
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    color="warning"
+                                    component="label"
+                                >
+                                    Import Config
+                                    <input
+                                        type="file"
+                                        accept=".json"
+                                        hidden
+                                        onChange={async (e) => {
+                                            const file = e.target.files[0];
+                                            if (!file) return;
+                                            if (!confirm('This will import the backup and may overwrite existing data. Continue?')) return;
+                                            try {
+                                                const text = await file.text();
+                                                const data = JSON.parse(text);
+                                                await client.post('/backup/import', data);
+                                                queryClient.invalidateQueries();
+                                                setNotification({ open: true, message: 'Configuration imported successfully!' });
+                                            } catch (err) {
+                                                alert('Import failed: ' + (err.response?.data?.error || err.message));
+                                            }
+                                        }}
+                                    />
+                                </Button>
                             </Box>
                         </CardContent>
                     </Card>

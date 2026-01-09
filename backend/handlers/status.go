@@ -23,6 +23,8 @@ type SystemStatus struct {
 	Connections    int               `json:"connections"`
 	BlockedCount   int               `json:"blocked_count"`
 	OriginsCount   int               `json:"origins_count"`
+	NetworkRX      uint64            `json:"network_rx"`
+	NetworkTX      uint64            `json:"network_tx"`
 	FirewallRules  []string          `json:"firewall_rules"`
 	Events         []SystemEvent     `json:"events"`
 	RequiredPorts  []PortRequirement `json:"required_ports"`
@@ -149,6 +151,9 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 	var blockedCount int64
 	h.DB.Table("ban_ips").Count(&blockedCount)
 
+	// Get network IO
+	networkRX, networkTX := sysInfo.GetNetworkIO()
+
 	// Build status with real data
 	status := SystemStatus{
 		OS:            runtime.GOOS,
@@ -160,6 +165,8 @@ func (h *Handler) GetSystemStatus(c *fiber.Ctx) error {
 		Connections:   sysInfo.GetActiveConnections(),
 		BlockedCount:  int(blockedCount),
 		OriginsCount:  int(originsCount),
+		NetworkRX:     networkRX,
+		NetworkTX:     networkTX,
 		FirewallRules: rules,
 		Events:        GetEventLog(),
 		RequiredPorts: requiredPorts,

@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
     Menu as MenuIcon, Dashboard as DashboardIcon, Router as RouterIcon,
-    Hub as HubIcon, Security as SecurityIcon, Logout as LogoutIcon, Settings, Speed, People, Block
+    Hub as HubIcon, Security as SecurityIcon, Logout as LogoutIcon, Settings, Speed, People, Block, History
 } from '@mui/icons-material';
 import logo from '../assets/logo.png';
 
@@ -19,6 +19,7 @@ const menuItems = [
     { text: 'Services', icon: <HubIcon />, path: '/services' },
     { text: 'Policy / Firewall', icon: <SecurityIcon />, path: '/policy' },
     { text: 'Access Rules', icon: <Block />, path: '/security/rules' },
+    { text: 'Attack History', icon: <History />, path: '/attacks' },
     { text: 'User Management', icon: <People />, path: '/users' },
 ];
 

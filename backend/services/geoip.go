@@ -3,6 +3,7 @@ package services
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -28,6 +29,22 @@ type GeoIPService struct {
 	mu           sync.RWMutex
 	lastUpdate   time.Time
 	licenseKey   string
+
+	// IP Intelligence (IPinfo.io)
+	ipInfoAPIKey string
+	ipInfoCache  map[string]*IPIntelligenceResult // Cache for 24h
+	cacheExpiry  map[string]time.Time
+}
+
+// IPIntelligenceResult represents the result of an IP intelligence check
+type IPIntelligenceResult struct {
+	IP        string `json:"ip"`
+	IsVPN     bool   `json:"is_vpn"`
+	IsProxy   bool   `json:"is_proxy"`
+	IsTor     bool   `json:"is_tor"`
+	IsHosting bool   `json:"is_hosting"`
+	Threat    bool   `json:"threat"`
+	Country   string `json:"country"`
 }
 
 func NewGeoIPService() *GeoIPService {
@@ -44,6 +61,8 @@ func NewGeoIPService() *GeoIPService {
 		vpnRanges:    make([]net.IPNet, 0),
 		torExitNodes: make([]net.IP, 0),
 		licenseKey:   licenseKey,
+		ipInfoCache:  make(map[string]*IPIntelligenceResult),
+		cacheExpiry:  make(map[string]time.Time),
 	}
 
 	// Create directory if not exists
@@ -143,6 +162,45 @@ func (g *GeoIPService) Close() {
 		g.db.Close()
 		g.db = nil
 	}
+}
+
+// StartAutoUpdateScheduler starts a background goroutine that refreshes GeoIP data periodically
+func (g *GeoIPService) StartAutoUpdateScheduler() {
+	go func() {
+		// Check every 24 hours
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			g.mu.RLock()
+			lastUpdate := g.lastUpdate
+			hasLicense := g.licenseKey != ""
+			g.mu.RUnlock()
+
+			// Refresh if older than 7 days and we have a license key
+			if hasLicense && time.Since(lastUpdate) > 7*24*time.Hour {
+				system.Info("Auto-refreshing GeoIP database (last update: %s)", lastUpdate.Format("2006-01-02"))
+				if err := g.RefreshGeoIP(); err != nil {
+					system.Warn("Auto-refresh GeoIP failed: %v", err)
+				} else {
+					system.Info("GeoIP database auto-refreshed successfully")
+				}
+
+				// Also refresh TOR exit nodes
+				if err := g.downloadTORExitNodes(); err != nil {
+					system.Warn("Auto-refresh TOR exit nodes failed: %v", err)
+				}
+			}
+		}
+	}()
+	system.Info("GeoIP auto-update scheduler started (checks daily, refreshes weekly)")
+}
+
+// GetLastUpdate returns the last update time
+func (g *GeoIPService) GetLastUpdate() time.Time {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.lastUpdate
 }
 
 // GetCountryCode returns the ISO country code for an IP
@@ -454,4 +512,107 @@ func (g *GeoIPService) DownloadCountryCIDRs(countries []string) error {
 	}
 
 	return nil
+}
+
+// SetIPInfoAPIKey sets the IPinfo.io API key
+func (g *GeoIPService) SetIPInfoAPIKey(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.ipInfoAPIKey = key
+}
+
+// CheckIPIntelligence checks an IP against IPinfo.io for VPN/proxy detection
+func (g *GeoIPService) CheckIPIntelligence(ipStr string) (*IPIntelligenceResult, error) {
+	g.mu.RLock()
+	apiKey := g.ipInfoAPIKey
+
+	// Check cache first
+	if cached, exists := g.ipInfoCache[ipStr]; exists {
+		if expiry, hasExpiry := g.cacheExpiry[ipStr]; hasExpiry && time.Now().Before(expiry) {
+			g.mu.RUnlock()
+			return cached, nil
+		}
+	}
+	g.mu.RUnlock()
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("IPinfo.io API key not configured")
+	}
+
+	// Make API request
+	url := fmt.Sprintf("https://ipinfo.io/%s?token=%s", ipStr, apiKey)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("IPinfo.io request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("IPinfo.io returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse response (IPinfo.io basic format)
+	var data struct {
+		IP      string `json:"ip"`
+		Country string `json:"country"`
+		Privacy struct {
+			VPN     bool `json:"vpn"`
+			Proxy   bool `json:"proxy"`
+			Tor     bool `json:"tor"`
+			Hosting bool `json:"hosting"`
+		} `json:"privacy"`
+	}
+
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	result := &IPIntelligenceResult{
+		IP:        data.IP,
+		Country:   data.Country,
+		IsVPN:     data.Privacy.VPN,
+		IsProxy:   data.Privacy.Proxy,
+		IsTor:     data.Privacy.Tor,
+		IsHosting: data.Privacy.Hosting,
+		Threat:    data.Privacy.VPN || data.Privacy.Proxy || data.Privacy.Tor,
+	}
+
+	// Cache for 24 hours
+	g.mu.Lock()
+	g.ipInfoCache[ipStr] = result
+	g.cacheExpiry[ipStr] = time.Now().Add(24 * time.Hour)
+	g.mu.Unlock()
+
+	return result, nil
+}
+
+// IsThreat checks if an IP is a VPN/proxy/TOR based on cached intelligence
+func (g *GeoIPService) IsThreat(ipStr string) bool {
+	g.mu.RLock()
+	if cached, exists := g.ipInfoCache[ipStr]; exists {
+		if expiry, hasExpiry := g.cacheExpiry[ipStr]; hasExpiry && time.Now().Before(expiry) {
+			g.mu.RUnlock()
+			return cached.Threat
+		}
+	}
+	g.mu.RUnlock()
+
+	// Not in cache, check synchronously if API key is available
+	g.mu.RLock()
+	hasKey := g.ipInfoAPIKey != ""
+	g.mu.RUnlock()
+
+	if hasKey {
+		result, err := g.CheckIPIntelligence(ipStr)
+		if err == nil && result != nil {
+			return result.Threat
+		}
+	}
+
+	return false
 }

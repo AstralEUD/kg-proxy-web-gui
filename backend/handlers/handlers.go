@@ -15,10 +15,11 @@ type Handler struct {
 	WG       *services.WireGuardService
 	Firewall *services.FirewallService
 	EBPF     *services.EBPFService
+	Webhook  *services.WebhookService
 }
 
-func NewHandler(db *gorm.DB, wg *services.WireGuardService, fw *services.FirewallService, ebpf *services.EBPFService) *Handler {
-	return &Handler{DB: db, WG: wg, Firewall: fw, EBPF: ebpf}
+func NewHandler(db *gorm.DB, wg *services.WireGuardService, fw *services.FirewallService, ebpf *services.EBPFService, webhook *services.WebhookService) *Handler {
+	return &Handler{DB: db, WG: wg, Firewall: fw, EBPF: ebpf, Webhook: webhook}
 }
 
 // GetOrigins - List all origins
