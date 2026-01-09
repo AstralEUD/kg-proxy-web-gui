@@ -282,6 +282,44 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
+    // --- 4.5 Steam Query Bypass ---
+    // Allow A2S_INFO and other query packets (Payload starts with 0xFFFFFFFF) regardless of GeoIP
+    if (protocol == IPPROTO_UDP) {
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        struct iphdr *ip = (void *)(eth + 1);
+        
+        // Ensure IP header is valid (already checked but needed for verifier)
+        if ((void *)(ip + 1) <= data_end && ip->protocol == IPPROTO_UDP) {
+             // Calculate UDP header position safely
+             // ip->ihl is 4-bit, multiply by 4 to get bytes
+             struct udphdr *udp = (void *)ip + (ip->ihl * 4);
+             
+             // Ensure UDP header is within bounds
+             if ((void *)(udp + 1) <= data_end) {
+                 // Payload follows UDP header
+                 unsigned char *payload = (void *)(udp + 1);
+                 
+                 // Check if at least 4 bytes of payload exist
+                 if ((void *)(payload + 4) <= data_end) {
+                     // Check for Steam Query Header: 0xFF 0xFF 0xFF 0xFF
+                     // This covers A2S_INFO, A2S_PLAYER, A2S_RULES, etc.
+                     if (*(__u32*)payload == 0xFFFFFFFF) {
+                         // Valid Steam Query - Allow
+                         // Increment allowed stats
+                         key = STAT_ALLOWED;
+                         __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+                         if (allowed_count)
+                             __sync_fetch_and_add(allowed_count, 1);
+                             
+                         return XDP_PASS;
+                     }
+                 }
+             }
+        }
+    }
+
     // --- 5. Check GeoIP ---
     struct lpm_key geo_key = { .prefixlen = 32, .data = src_ip };
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);

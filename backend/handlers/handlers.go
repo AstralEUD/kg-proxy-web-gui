@@ -87,6 +87,7 @@ func (h *Handler) CreateOrigin(c *fiber.Ctx) error {
 			"server_public_key": serverPubKey,
 			"allowed_ips":       allowedIPs,
 			"endpoint":          endpoint,
+			"dns":               "168.126.63.1",
 		},
 	})
 }
@@ -130,6 +131,7 @@ func (h *Handler) UpdateOrigin(c *fiber.Ctx) error {
 			"server_public_key": serverPubKey,
 			"allowed_ips":       allowedIPs,
 			"endpoint":          endpoint,
+			"dns":               "168.126.63.1",
 		},
 	})
 }

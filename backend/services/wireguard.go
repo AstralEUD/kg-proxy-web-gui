@@ -285,7 +285,7 @@ func (s *WireGuardService) generateClientConfig(peer *models.WireGuardPeer, vpsI
 	return fmt.Sprintf(`[Interface]
 Address = 10.200.0.%d/32
 PrivateKey = %s
-DNS = 8.8.8.8
+DNS = 168.126.63.1
 
 [Peer]
 PublicKey = <VPS_PUB_KEY>
