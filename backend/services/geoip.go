@@ -225,6 +225,37 @@ func (g *GeoIPService) GetCountryCode(ipStr string) string {
 	return record.Country.IsoCode
 }
 
+// GetCountry returns the country name and ISO code for an IP
+func (g *GeoIPService) GetCountry(ipStr string) (string, string) {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return "Unknown", "XX"
+	}
+
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	if g.db == nil {
+		return "Unknown", "XX"
+	}
+
+	record, err := g.db.Country(ip)
+	if err != nil {
+		return "Unknown", "XX"
+	}
+
+	name := record.Country.Names["en"]
+	if name == "" {
+		name = "Unknown"
+	}
+	code := record.Country.IsoCode
+	if code == "" {
+		code = "XX"
+	}
+
+	return name, code
+}
+
 // IsCountryAllowed checks if an IP is from an allowed country
 func (g *GeoIPService) IsCountryAllowed(ipStr string, allowedCountries []string) bool {
 	countryCode := g.GetCountryCode(ipStr)
