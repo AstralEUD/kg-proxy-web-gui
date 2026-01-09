@@ -92,10 +92,13 @@ func formatBytes(bytes int64) string {
 func calculateRiskScore(entry services.TrafficEntry) int {
 	score := 0
 	if entry.Blocked {
-		score += 50
+		score += 10 // Basic block score
 	}
-	if entry.PacketCount > 500 {
-		score += 30
+	if entry.PacketCount > 100 {
+		score += 10
+	}
+	if entry.PacketCount > 1000 {
+		score += 40
 	}
 	if entry.CountryCode == "CN" || entry.CountryCode == "RU" {
 		score += 20

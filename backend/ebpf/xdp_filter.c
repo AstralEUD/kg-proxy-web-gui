@@ -35,11 +35,18 @@ struct {
     __type(value, __u32); // 1 = blocked
 } blocked_ips SEC(".maps");
 
+// LPM Trie Key
+struct lpm_key {
+    __u32 prefixlen;
+    __u32 data;
+};
+
 // BPF map for allowed countries (GeoIP)
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1000000);
-    __type(key, __u32);   // IP address
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(max_entries, 600000);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, struct lpm_key);
     __type(value, __u32); // Country code (as integer)
 } geo_allowed SEC(".maps");
 
@@ -276,7 +283,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     }
 
     // --- 5. Check GeoIP ---
-    __u32 *country = bpf_map_lookup_elem(&geo_allowed, &src_ip);
+    struct lpm_key geo_key = { .prefixlen = 32, .data = src_ip };
+    __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);
     if (!country) {
         // IP not in allowed country list
         // Mark as BLOCKED in stats so Dashboard shows it correctly.

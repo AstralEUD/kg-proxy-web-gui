@@ -232,8 +232,18 @@ func (e *EBPFService) populateGeoIPMap() error {
 
 			// Use BigEndian to match network byte order in BPF
 			ipUint := binary.BigEndian.Uint32(ip)
+			ones, _ := ipNet.Mask.Size()
 
-			if err := objs.GeoAllowed.Put(ipUint, countryCode); err != nil {
+			// LPM Trie Key
+			key := struct {
+				PrefixLen uint32
+				Data      uint32
+			}{
+				PrefixLen: uint32(ones),
+				Data:      ipUint,
+			}
+
+			if err := objs.GeoAllowed.Put(key, countryCode); err != nil {
 				system.Warn("Failed to add IP to geo_allowed map: %v", err)
 				continue
 			}
