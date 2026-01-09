@@ -274,12 +274,18 @@ func (e *EBPFService) collectTrafficFromEBPF() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Snapshot ticker (1 minute)
+	snapshotTicker := time.NewTicker(1 * time.Minute)
+	defer snapshotTicker.Stop()
+
 	for {
 		select {
 		case <-e.stopChan:
 			return
 		case <-ticker.C:
 			e.readEBPFMaps()
+		case <-snapshotTicker.C:
+			e.saveTrafficSnapshot()
 		}
 	}
 }
