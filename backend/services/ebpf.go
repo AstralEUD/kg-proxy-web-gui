@@ -170,7 +170,7 @@ func (e *EBPFService) loadEBPFProgram() error {
 
 	// Initialize BPF maps with GeoIP data
 	if e.geoIPService != nil {
-		e.populateGeoIPMap()
+		e.UpdateGeoIPData()
 	}
 
 	return nil
@@ -601,7 +601,7 @@ func (e *EBPFService) UpdateGeoAllowed(allowedCountries []string) error {
 	}
 
 	// Repopulate with new countries (simplified clear approach)
-	e.populateGeoIPMap()
+	e.UpdateGeoIPData()
 
 	system.Info("Updated geo-allowed countries: %v", allowedCountries)
 	return nil
