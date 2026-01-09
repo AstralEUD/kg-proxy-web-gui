@@ -26,6 +26,7 @@ type AttackEvent struct {
 	Timestamp   time.Time `gorm:"index" json:"timestamp"`
 	SourceIP    string    `gorm:"index" json:"source_ip"`
 	CountryCode string    `json:"country_code"`
+	CountryName string    `json:"country_name"`
 	AttackType  string    `json:"attack_type"` // "flood", "geoip_violation", "blacklist", "rate_limit"
 	PPS         int64     `json:"pps"`         // Packets per second at detection
 	BPS         int64     `json:"bps"`         // Bytes per second at detection

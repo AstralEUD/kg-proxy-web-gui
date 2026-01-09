@@ -180,7 +180,6 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
     // --- 1. Track Statistics for ALL IPs (including Private) ---
     struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-    __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
     
     if (stats) {
         __sync_fetch_and_add(&stats->packets, 1);
