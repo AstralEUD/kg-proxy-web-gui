@@ -149,6 +149,11 @@ func (e *EBPFService) loadEBPFProgram() error {
 	}
 	e.objs = objs
 
+	// Populate GeoIP map before attaching to avoid dropping all traffic in hard blocking mode
+	if err := e.UpdateGeoIPData(); err != nil {
+		system.Warn("Failed to populate GeoIP map initially: %v", err)
+	}
+
 	// Attach XDP program to interface
 	l, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.XdpTrafficFilter,
