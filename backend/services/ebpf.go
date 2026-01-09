@@ -127,6 +127,9 @@ func (e *EBPFService) Enable() error {
 	// Start real traffic collection from eBPF maps
 	go e.collectTrafficFromEBPF()
 
+	// Start GeoIP map sync loop (retry initially to catch up with GeoIP DB load)
+	go e.startGeoIPSyncLoop()
+
 	system.Info("eBPF XDP filter loaded and attached to %s", e.ifaceName)
 	return nil
 }
@@ -277,6 +280,34 @@ func (e *EBPFService) collectTrafficFromEBPF() {
 			return
 		case <-ticker.C:
 			e.readEBPFMaps()
+		}
+	}
+}
+
+// startGeoIPSyncLoop keeps the eBPF GeoIP map in sync with the GeoIP service
+func (e *EBPFService) startGeoIPSyncLoop() {
+	// Initial retry phase: try frequently for the first 30 seconds
+	// directly after startup, GeoIP DB might still be downloading/loading.
+	for i := 0; i < 30; i++ {
+		time.Sleep(1 * time.Second)
+		if !e.isRunning {
+			return
+		}
+		// We blindly attempt update. If GeoIP service has data, it populates map.
+		// If not, it does nothing or partial update. It's safe.
+		e.UpdateGeoIPData()
+	}
+
+	// Long-term sync: update every hour to catch new DB updates
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-ticker.C:
+			e.UpdateGeoIPData()
 		}
 	}
 }
