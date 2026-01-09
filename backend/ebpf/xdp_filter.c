@@ -282,6 +282,46 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
+    // --- 4.4 TCP Outbound Response Bypass (Bitwise Check) ---
+    // Allow TCP packets with ACK or RST flags set (Established/Related traffic)
+    // This allows the server to connect to external services (GitHub/Steam) even if country is blocked
+    // New connections (SYN only) are still subject to GeoIP
+    if (protocol == IPPROTO_TCP) {
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        struct iphdr *ip = (void *)(eth + 1);
+
+        if ((void *)(ip + 1) <= data_end && ip->protocol == IPPROTO_TCP) {
+             struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+             if ((void *)(tcp + 1) <= data_end) {
+                 // Check for ACK or RST flags
+                 // tcphdr flags are mixed in bitfields, but standard layout allows access
+                 // We can access the flags byte directly if needed, or use struct fields if defined
+                 // Linux tcphdr usually has: u16 res1:4, doff:4, fin:1, syn:1, rst:1, psh:1, ack:1, urg:1, ece:1, cwr:1;
+                 // But eBPF definitions might vary. Safest is raw byte check or reliable struct.
+                 // In vmlinux.h or standard headers, flags are often in a u16.
+                 
+                 // Let's assume standard u8 flags handling or simpler approach.
+                 // ACK=16 (0x10), RST=4 (0x04) within the flags byte (13th byte of TCP header)
+                 
+                 // Using __u8 *flags = ((__u8 *)tcp) + 13; is common hack but struct field is cleaner if available.
+                 // struct tcphdr has 'ack' and 'rst' bitfields in many definitions.
+                 // However, to be safe and portable in XDP:
+                 if (tcp->ack || tcp->rst) {
+                     // Pass established/return traffic
+                     // Do NOT increment allowed stats to strictly track ONLY whitelist passes? 
+                     // Or maybe count as allowed? Let's count as allowed to see traffic flow.
+                     key = STAT_ALLOWED;
+                     __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+                     if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+
+                     return XDP_PASS;
+                 }
+             }
+        }
+    }
+
     // --- 4.5 Steam Query Bypass ---
     // Allow A2S_INFO and other query packets (Payload starts with 0xFFFFFFFF) regardless of GeoIP
     if (protocol == IPPROTO_UDP) {
