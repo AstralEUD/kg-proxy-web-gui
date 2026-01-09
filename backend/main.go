@@ -122,6 +122,14 @@ func main() {
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
 	ebpfService.SetDatabase(db)               // Connect DB for traffic snapshots
 
+	// 4. Initial Firewall Application
+	// This ensures management ports are open even if the DB was empty
+	// CRITICAL: This must run BEFORE eBPF Enable to ensure GeoIP CIDRs are downloaded and ready
+	system.Info("Applying initial firewall rules...")
+	if err := fwService.ApplyRules(); err != nil {
+		system.Error("Failed to apply initial firewall rules: %v", err)
+	}
+
 	// Always try to enable eBPF XDP monitoring
 	// CRITICAL: Fail if eBPF cannot be loaded
 	if err := ebpfService.Enable(); err != nil {
@@ -153,14 +161,6 @@ func main() {
 	// 3. Setup Handlers
 	h := handlers.NewHandler(db, wgService, fwService, ebpfService, webhookService)
 
-	// 4. Initial Firewall Application
-	// This ensures management ports are open even if the DB was empty
-	system.Info("Applying initial firewall rules...")
-	if err := fwService.ApplyRules(); err != nil {
-		system.Error("Failed to apply initial firewall rules: %v", err)
-		// We don't log.Fatal here because the app might still be accessible via SSH/other means
-		// but we want this recorded.
-	}
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: false,
 	})
