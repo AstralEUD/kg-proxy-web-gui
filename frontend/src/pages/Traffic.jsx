@@ -35,8 +35,8 @@ export default function Traffic() {
         const fetchHistory = async () => {
             try {
                 const res = await client.get(`/traffic/history?range=${historyRange}`);
-                if (res.data.history) {
-                    setHistoryData(res.data.history.map(h => ({
+                if (res.data.snapshots) {
+                    setHistoryData(res.data.snapshots.map(h => ({
                         ...h,
                         time: new Date(h.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
                         allowed_pps: h.allowed_pps || 0,
