@@ -57,6 +57,9 @@ type EBPFService struct {
 	prevNetworkTX      int64
 	prevTotalPackets   int64
 	prevBlockedPackets int64
+
+	// State for log suppression
+	lastGeoIPCount int
 }
 
 func NewEBPFService() *EBPFService {
@@ -263,8 +266,9 @@ func (e *EBPFService) UpdateGeoIPData() error {
 		}
 	}
 
-	if count > 0 {
+	if count > 0 && count != e.lastGeoIPCount {
 		system.Info("GeoIP BPF map update: %d CIDRs loaded", count)
+		e.lastGeoIPCount = count
 	}
 	return nil
 }

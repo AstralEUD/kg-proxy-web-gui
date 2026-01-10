@@ -380,13 +380,13 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// Allow established connections
 	sb.WriteString("-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 
-	// 1. SSH Brute-force Protection (Max 3 attempts per 60s)
+	// 1. SSH Brute-force Protection (Max 10 attempts per 60s)
 	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set\n")
-	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 4 -j DROP\n")
+	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 10 -j DROP\n")
 	sb.WriteString("-A INPUT -p tcp --dport 22 -j ACCEPT\n")
 
-	// 2. Global TCP Connection Limit per IP (Max 50)
-	sb.WriteString("-A INPUT -p tcp -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP\n")
+	// 2. Global TCP Connection Limit per IP (Max 200)
+	sb.WriteString("-A INPUT -p tcp -m connlimit --connlimit-above 200 --connlimit-mask 32 -j DROP\n")
 
 	// Allow WireGuard (port 51820)
 	sb.WriteString("-A INPUT -p udp --dport 51820 -j ACCEPT\n")

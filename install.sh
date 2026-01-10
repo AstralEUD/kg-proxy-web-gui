@@ -124,6 +124,8 @@ net.ipv4.ip_forward = 1
 net.ipv4.tcp_syncookies = 1
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.log_martians = 0
+net.ipv4.conf.default.log_martians = 0
 net.core.bpf_jit_enable = 1
 EOF
 sysctl --system > /dev/null 2>&1 || true

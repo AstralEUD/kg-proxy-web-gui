@@ -48,8 +48,8 @@ func (s *FirewallService) ApplyHardening(level int) error {
 		// === Security & Anti-Spoofing ===
 		"net.ipv4.conf.all.rp_filter":        "1", // Reverse Path Filtering
 		"net.ipv4.conf.default.rp_filter":    "1",
-		"net.ipv4.conf.all.log_martians":     "1",
-		"net.ipv4.conf.default.log_martians": "1",
+		"net.ipv4.conf.all.log_martians":     "0", // Disable logging to prevent dmesg flood
+		"net.ipv4.conf.default.log_martians": "0",
 
 		// === ICMP Flood Protection ===
 		"net.ipv4.icmp_echo_ignore_broadcasts":       "1",
