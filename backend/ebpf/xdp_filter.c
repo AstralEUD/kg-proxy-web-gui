@@ -62,17 +62,9 @@ struct {
 
 // ... (stats maps remain same)
 
-// Helper to copy IP to key
+// Help to copy IP to key
 static __always_inline void set_key_ipv4(struct lpm_key *key, __u32 ip) {
     key->prefixlen = 32;
-    // IP is already in Network Byte Order (src_ip). 
-    // We copy it byte-by-byte to data[0..3].
-    // Note: __builtin_memcpy might be optimized out or cause issues in older LLVM, 
-    // manual assignment is safer for BPF just to be sure.
-    // ip (u32) is 0xAABBCCDD (if viewed as int), but in memory it is AA BB CC DD.
-    // We want data[0]=AA, data[1]=BB...
-    // Actually, src_ip variable is u32. 'ip' arg is u32.
-    // We cast the pointer to u8* to copy bytes.
     __u8 *bytes = (__u8 *)&ip;
     key->data[0] = bytes[0];
     key->data[1] = bytes[1];
@@ -80,19 +72,7 @@ static __always_inline void set_key_ipv4(struct lpm_key *key, __u32 ip) {
     key->data[3] = bytes[3];
 }
 
-SEC("xdp")
-int xdp_traffic_filter(struct xdp_md *ctx) {
-    void *data_end = (void *)(long)ctx->data_end;
-    void *data = (void *)(long)ctx->data;
-
-    __u32 src_ip = 0;
-    __u16 protocol = 0;
-    __u16 dst_port = 0;
-
-    // Parse packet
-    if (parse_ip_packet(data, data_end, &src_ip, &protocol, &dst_port) < 0)
-        return XDP_PASS;
-
+// Global statistics
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 10);
