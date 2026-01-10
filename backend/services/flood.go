@@ -247,6 +247,11 @@ func (fp *FloodProtection) processAttackQueue() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Webhook aggregation ticker (10s) - prevents goroutine explosion
+	webhookTicker := time.NewTicker(10 * time.Second)
+	defer webhookTicker.Stop()
+	webhookBuffer := make([]models.AttackEvent, 0, 50)
+
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -261,13 +266,42 @@ func (fp *FloodProtection) processAttackQueue() {
 		}
 
 		// Reset batch
-		batch = make([]models.AttackEvent, 0, batchSize) // Allocating new slice is safer/easier than zeroing
+		batch = make([]models.AttackEvent, 0, batchSize)
+	}
+
+	flushWebhook := func() {
+		if len(webhookBuffer) == 0 || fp.webhook == nil {
+			return
+		}
+
+		// Send aggregated alert (single HTTP call)
+		count := len(webhookBuffer)
+		topIP := webhookBuffer[0].SourceIP
+		topCountry := webhookBuffer[0].CountryName
+		topType := webhookBuffer[0].AttackType
+		var totalPPS int64
+		for _, e := range webhookBuffer {
+			totalPPS += e.PPS
+		}
+
+		// Clear buffer before sending (in case webhook is slow)
+		webhookBuffer = make([]models.AttackEvent, 0, 50)
+
+		// Single goroutine for aggregated alert
+		go fp.webhook.SendAttackAlert(
+			fmt.Sprintf("%s (+%d more)", topIP, count-1),
+			topCountry,
+			topType,
+			totalPPS,
+			fmt.Sprintf("Blocked %d attacks in 10s", count),
+		)
 	}
 
 	for {
 		select {
 		case <-fp.stopChan:
-			flush() // Flush remaining items before stop
+			flush()
+			flushWebhook()
 			return
 
 		case event := <-fp.attackQueue:
@@ -278,11 +312,9 @@ func (fp *FloodProtection) processAttackQueue() {
 				event.CountryCode = countryCode
 			}
 
-			// 2. Send Webhook immediately (Async)
-			// We don't batch webhooks because they need to be timely, and usually filtered by rate limits upstream
-			if fp.webhook != nil {
-				// Use goroutine to prevent blocking the processing loop
-				go fp.webhook.SendAttackAlert(event.SourceIP, event.CountryName, event.AttackType, event.PPS, "Blocked via Flood Protection")
+			// 2. Add to Webhook Buffer (aggregated, not immediate)
+			if len(webhookBuffer) < 50 {
+				webhookBuffer = append(webhookBuffer, event)
 			}
 
 			// 3. Add to DB Batch
@@ -293,6 +325,9 @@ func (fp *FloodProtection) processAttackQueue() {
 
 		case <-ticker.C:
 			flush()
+
+		case <-webhookTicker.C:
+			flushWebhook()
 		}
 	}
 }
