@@ -175,6 +175,11 @@ func (e *EBPFService) loadEBPFProgram() error {
 		e.UpdateGeoIPData()
 	}
 
+	// Sync Whitelist (DB + Critical DNS)
+	if err := e.SyncWhitelist(); err != nil {
+		system.Warn("Failed to sync whitelist on startup: %v", err)
+	}
+
 	return nil
 }
 
@@ -574,6 +579,33 @@ func (e *EBPFService) IsEnabled() bool {
 }
 
 // Helper functions - Corrected for Endianness
+
+// CriticalDNS list - always allowed
+var CriticalDNS = []string{
+	"108.61.10.10", "9.9.9.9", "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1",
+}
+
+// SyncWhitelist reloads allowed IPs from DB and adds Critical DNS
+func (e *EBPFService) SyncWhitelist() error {
+	if e.db == nil {
+		return fmt.Errorf("database not connected")
+	}
+
+	var allowed []models.AllowIP
+	if err := e.db.Find(&allowed).Error; err != nil {
+		return err
+	}
+
+	var ips []string
+	// Add DB allowed IPs
+	for _, a := range allowed {
+		ips = append(ips, a.IP)
+	}
+	// Add Critical DNS
+	ips = append(ips, CriticalDNS...)
+
+	return e.UpdateAllowIPs(ips)
+}
 
 // UpdateBlockedIPs updates the blocked_ips BPF map
 func (e *EBPFService) UpdateBlockedIPs(ips []string) error {

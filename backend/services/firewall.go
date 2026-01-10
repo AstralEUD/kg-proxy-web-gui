@@ -159,6 +159,14 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 		sb.WriteString(fmt.Sprintf("add white_list %s\n", a.IP))
 	}
 
+	// Add Critical DNS (Always Allowed)
+	criticalDNS := []string{
+		"108.61.10.10", "9.9.9.9", "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1",
+	}
+	for _, dns := range criticalDNS {
+		sb.WriteString(fmt.Sprintf("add white_list %s\n", dns))
+	}
+
 	// Add manually allowed foreign IPs
 	var allowed []models.AllowForeign
 	s.DB.Find(&allowed)

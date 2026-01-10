@@ -33,6 +33,7 @@ func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error { 
 func (e *EBPFService) GetPortStats() []PortStats                              { return nil }
 func (e *EBPFService) ResetTrafficStats() error                               { return nil }
 func (e *EBPFService) UpdateAllowIPs(ips []string) error                      { return nil }
+func (e *EBPFService) SyncWhitelist() error                                   { return nil }
 
 // PortStats dummy struct for method signature
 type PortStats struct {

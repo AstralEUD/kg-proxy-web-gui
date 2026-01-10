@@ -213,13 +213,7 @@ func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
 
 	// Update eBPF whitelist
 	if h.EBPF != nil {
-		var allAllowed []models.AllowIP
-		h.DB.Find(&allAllowed)
-		var ips []string
-		for _, a := range allAllowed {
-			ips = append(ips, a.IP)
-		}
-		go h.EBPF.UpdateAllowIPs(ips)
+		go h.EBPF.SyncWhitelist()
 	}
 
 	return c.JSON(input)
@@ -238,13 +232,7 @@ func (h *Handler) DeleteAllowIP(c *fiber.Ctx) error {
 
 	// Update eBPF whitelist
 	if h.EBPF != nil {
-		var allAllowed []models.AllowIP
-		h.DB.Find(&allAllowed)
-		var ips []string
-		for _, a := range allAllowed {
-			ips = append(ips, a.IP)
-		}
-		go h.EBPF.UpdateAllowIPs(ips)
+		go h.EBPF.SyncWhitelist()
 	}
 
 	return c.JSON(fiber.Map{"success": true})
