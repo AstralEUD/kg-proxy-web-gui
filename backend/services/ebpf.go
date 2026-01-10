@@ -274,6 +274,14 @@ func (e *EBPFService) UpdateGeoIPData() error {
 	if count > 0 && count != e.lastGeoIPCount {
 		system.Info("GeoIP BPF map update: %d CIDRs loaded", count)
 		e.lastGeoIPCount = count
+	} else if count == 0 {
+		system.Warn("⚠️ CRITICAL: No GeoIP data loaded! Disabling Hard Blocking to prevent lockout.")
+		// Fail-Safe: Disable Hard Blocking if no countries are loaded
+		// Index 0 is configuration for Hard Blocking
+		configHardBlocking := uint32(0)
+		if err := objs.Config.Put(configHardBlocking, uint32(0)); err != nil {
+			system.Warn("Failed to apply fail-safe (disable hard blocking): %v", err)
+		}
 	}
 	return nil
 }
