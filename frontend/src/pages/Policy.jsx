@@ -382,8 +382,56 @@ export default function Policy() {
                                 <Divider sx={{ my: 2, bgcolor: '#333' }} />
 
                                 <Typography variant="subtitle2" sx={{ color: '#fff', mb: 1, display: 'flex', alignItems: 'center' }}>
-                                    <Build sx={{ mr: 1, fontSize: 18 }} /> Maintenance
+                                    <Build sx={{ mr: 1, fontSize: 18 }} /> Maintenance (모든 차단 해제)
                                 </Typography>
+
+                                {/* Maintenance Mode Status */}
+                                {settings.maintenance_until && new Date(settings.maintenance_until) > new Date() && (
+                                    <Alert severity="warning" sx={{ mb: 2 }}>
+                                        🔧 유지보수 모드 활성화 - {new Date(settings.maintenance_until).toLocaleTimeString()} 까지 모든 차단 비활성화
+                                    </Alert>
+                                )}
+
+                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                                    {[
+                                        { label: '15분', minutes: 15 },
+                                        { label: '30분', minutes: 30 },
+                                        { label: '1시간', minutes: 60 },
+                                        { label: '2시간', minutes: 120 },
+                                    ].map(opt => (
+                                        <Button
+                                            key={opt.minutes}
+                                            variant="contained"
+                                            size="small"
+                                            onClick={() => {
+                                                const until = new Date(Date.now() + opt.minutes * 60 * 1000);
+                                                queryClient.setQueryData(['security-settings'], old => ({
+                                                    ...old,
+                                                    maintenance_until: until.toISOString()
+                                                }));
+                                            }}
+                                            sx={{ bgcolor: '#ff9800', '&:hover': { bgcolor: '#f57c00' } }}
+                                        >
+                                            {opt.label}
+                                        </Button>
+                                    ))}
+                                    <Button
+                                        variant="outlined"
+                                        size="small"
+                                        color="error"
+                                        onClick={() => {
+                                            queryClient.setQueryData(['security-settings'], old => ({
+                                                ...old,
+                                                maintenance_until: null
+                                            }));
+                                        }}
+                                    >
+                                        해제
+                                    </Button>
+                                </Box>
+
+                                <Divider sx={{ my: 2, bgcolor: '#333' }} />
+
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                     <FormControl fullWidth size="small" sx={{ bgcolor: '#0a0a0a' }}>
                                         <InputLabel sx={{ color: '#888' }}>Stats Reset</InputLabel>

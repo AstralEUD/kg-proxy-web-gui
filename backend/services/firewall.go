@@ -6,6 +6,7 @@ import (
 	"kg-proxy-web-gui/backend/system"
 	"os"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -15,15 +16,45 @@ type FirewallService struct {
 	Executor     system.CommandExecutor
 	GeoIP        *GeoIPService
 	FloodProtect *FloodProtection
+
+	inMaintenance bool // internal state to track if we're currently in maintenance mode
 }
 
 func NewFirewallService(db *gorm.DB, exec system.CommandExecutor, geoip *GeoIPService, flood *FloodProtection) *FirewallService {
 	return &FirewallService{
-		DB:           db,
-		Executor:     exec,
-		GeoIP:        geoip,
-		FloodProtect: flood,
+		DB:            db,
+		Executor:      exec,
+		GeoIP:         geoip,
+		FloodProtect:  flood,
+		inMaintenance: false,
 	}
+}
+
+// StartMaintenanceWatcher starts a background loop to check for maintenance expiration
+func (s *FirewallService) StartMaintenanceWatcher() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			var settings models.SecuritySettings
+			if err := s.DB.First(&settings, 1).Error; err != nil {
+				continue
+			}
+
+			// If we are in maintenance mode but the time has expired
+			if settings.MaintenanceUntil != nil && time.Now().After(*settings.MaintenanceUntil) {
+				system.Info("🕒 Maintenance mode expired. Automatically restoring firewall...")
+
+				// Clear the expiration time in DB so we don't repeat this
+				s.DB.Model(&settings).Update("maintenance_until", nil)
+
+				// Re-apply normal rules
+				s.inMaintenance = false
+				s.ApplyRules()
+			}
+		}
+	}()
 }
 
 func (s *FirewallService) ApplyRules() error {
@@ -38,6 +69,15 @@ func (s *FirewallService) ApplyRules() error {
 			SYNCookies:        true,
 		}
 	}
+
+	// Check Maintenance Mode: If active, bypass all blocking
+	if settings.MaintenanceUntil != nil && settings.MaintenanceUntil.After(time.Now()) {
+		system.Warn("🔧 Maintenance Mode Active until %s - Bypassing all blocking rules", settings.MaintenanceUntil.Format("15:04:05"))
+		s.inMaintenance = true
+		// Apply minimal rules (ACCEPT all)
+		return s.applyMaintenanceMode()
+	}
+	s.inMaintenance = false
 
 	// Update flood protection level
 	if s.FloodProtect != nil {
@@ -417,4 +457,28 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 func (s *FirewallService) saveRulesToFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// applyMaintenanceMode disables all blocking and allows all traffic
+func (s *FirewallService) applyMaintenanceMode() error {
+	system.Info("Applying Maintenance Mode - All blocking disabled")
+
+	// Flush all iptables rules
+	s.Executor.Execute("iptables", "-F")
+	s.Executor.Execute("iptables", "-t", "mangle", "-F")
+	s.Executor.Execute("iptables", "-t", "nat", "-F")
+
+	// Set default ACCEPT policies
+	s.Executor.Execute("iptables", "-P", "INPUT", "ACCEPT")
+	s.Executor.Execute("iptables", "-P", "FORWARD", "ACCEPT")
+	s.Executor.Execute("iptables", "-P", "OUTPUT", "ACCEPT")
+
+	// Keep basic NAT for WireGuard forwarding
+	eth := system.GetDefaultInterface()
+	if eth != "" {
+		s.Executor.Execute("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", eth, "-j", "MASQUERADE")
+	}
+
+	system.Warn("⚠️ Maintenance Mode: Firewall is DISABLED - All traffic allowed")
+	return nil
 }

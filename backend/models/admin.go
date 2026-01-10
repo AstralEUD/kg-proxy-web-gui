@@ -46,5 +46,8 @@ type SecuritySettings struct {
 	// Data Retention
 	AttackHistoryDays int `gorm:"default:30" json:"attack_history_days"` // Days to keep attack history
 
+	// Maintenance Mode (Temporarily disable all blocking)
+	MaintenanceUntil *time.Time `json:"maintenance_until,omitempty"` // If set and not expired, all blocking is disabled
+
 	UpdatedAt time.Time `json:"updated_at"`
 }

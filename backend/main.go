@@ -110,6 +110,7 @@ func main() {
 	}
 
 	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
+	fwService.StartMaintenanceWatcher()
 
 	// Load MaxMind license key from DB if available (using settings fetched above)
 	if settings.MaxMindLicenseKey != "" {

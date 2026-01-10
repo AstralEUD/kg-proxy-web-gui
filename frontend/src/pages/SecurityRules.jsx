@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
     Box, Button, Grid, Card, CardContent, Typography, TextField,
@@ -9,11 +9,66 @@ import {
 import { Add as AddIcon, Delete, CheckCircle, Block, Security, Search } from '@mui/icons-material';
 import client from '../api/client';
 
+// CIDR Helper: Calculate IP range from CIDR notation
+function parseCIDRInfo(input) {
+    if (!input) return null;
+    const trimmed = input.trim();
+
+    // Check if CIDR format
+    const cidrMatch = trimmed.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+    if (cidrMatch) {
+        const prefix = parseInt(cidrMatch[5], 10);
+        if (prefix < 0 || prefix > 32) return { valid: false, error: '잘못된 서브넷' };
+
+        // Parse IP parts
+        const ipParts = [parseInt(cidrMatch[1]), parseInt(cidrMatch[2]), parseInt(cidrMatch[3]), parseInt(cidrMatch[4])];
+        if (ipParts.some(p => p > 255)) return { valid: false, error: '잘못된 IP' };
+
+        // Calculate network address and broadcast address
+        const ipNum = (ipParts[0] << 24) + (ipParts[1] << 16) + (ipParts[2] << 8) + ipParts[3];
+        const mask = (0xFFFFFFFF << (32 - prefix)) >>> 0;
+        const networkNum = (ipNum & mask) >>> 0;
+        const broadcastNum = (networkNum | (~mask >>> 0)) >>> 0;
+
+        const formatIP = (num) => [
+            (num >>> 24) & 0xFF,
+            (num >>> 16) & 0xFF,
+            (num >>> 8) & 0xFF,
+            num & 0xFF
+        ].join('.');
+
+        const startIP = formatIP(networkNum);
+        const endIP = formatIP(broadcastNum);
+        const hostCount = Math.pow(2, 32 - prefix);
+
+        return {
+            valid: true,
+            type: 'cidr',
+            prefix,
+            hosts: hostCount,
+            display: `${startIP} ~ ${endIP} (${hostCount.toLocaleString()}개)`
+        };
+    }
+
+    // Check if single IP format
+    const ipMatch = trimmed.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipMatch) {
+        const parts = [parseInt(ipMatch[1]), parseInt(ipMatch[2]), parseInt(ipMatch[3]), parseInt(ipMatch[4])];
+        if (parts.some(p => p > 255)) return { valid: false, error: '잘못된 IP' };
+        return { valid: true, type: 'single', display: '단일 IP' };
+    }
+
+    return { valid: false, error: '잘못된 형식' };
+}
+
 export default function SecurityRules() {
     const [tab, setTab] = useState(0);
     const [openAdd, setOpenAdd] = useState(false);
     const [addType, setAddType] = useState('allow'); // 'allow' or 'block'
     const [newItem, setNewItem] = useState({ ip: '', comment: '' });
+
+    // CIDR Auto-calculation
+    const cidrInfo = useMemo(() => parseCIDRInfo(newItem.ip), [newItem.ip]);
 
     // Check IP Tool State
     const [checkIP, setCheckIP] = useState('');
@@ -175,11 +230,14 @@ export default function SecurityRules() {
                 <DialogContent>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
                         <TextField
-                            label="IP Address"
+                            label="IP 주소 또는 CIDR"
+                            placeholder="예: 192.168.1.0/24"
                             fullWidth
                             value={newItem.ip}
                             onChange={(e) => setNewItem({ ...newItem, ip: e.target.value })}
-                            sx={{ '& input': { color: '#fff' }, '& label': { color: '#888' }, '& fieldset': { borderColor: '#444' } }}
+                            error={cidrInfo && !cidrInfo.valid}
+                            helperText={cidrInfo ? (cidrInfo.valid ? cidrInfo.display : cidrInfo.error) : 'IP 주소 또는 CIDR (예: 10.0.0.0/8)'}
+                            sx={{ '& input': { color: '#fff' }, '& label': { color: '#888' }, '& fieldset': { borderColor: '#444' }, '& .MuiFormHelperText-root': { color: cidrInfo?.valid ? '#00e5ff' : '#f50057' } }}
                         />
                         <TextField
                             label={addType === 'allow' ? "Label (Optional)" : "Reason (Optional)"}

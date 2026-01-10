@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/system"
+	"net"
 	"net/http"
 	"strings"
 
@@ -200,12 +202,20 @@ func (h *Handler) GetIPRules(c *fiber.Ctx) error {
 	})
 }
 
-// AddAllowIP adds an IP to whitelist
+// AddAllowIP adds an IP or CIDR to whitelist
 func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
 	var input models.AllowIP
 	if err := c.BodyParser(&input); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid input"})
 	}
+
+	// Validate and normalize IP/CIDR
+	normalized, err := validateAndNormalizeCIDR(input.IP)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	input.IP = normalized
+
 	if err := h.DB.Create(&input).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -220,6 +230,28 @@ func (h *Handler) AddAllowIP(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(input)
+}
+
+// validateAndNormalizeCIDR validates IP or CIDR and normalizes to CIDR format
+func validateAndNormalizeCIDR(input string) (string, error) {
+	input = strings.TrimSpace(input)
+
+	// Try CIDR first
+	_, ipNet, err := net.ParseCIDR(input)
+	if err == nil {
+		return ipNet.String(), nil // Normalized CIDR (e.g., 192.168.1.5/24 -> 192.168.1.0/24)
+	}
+
+	// Try single IP
+	if singleIP := net.ParseIP(input); singleIP != nil {
+		// Convert to CIDR /32 for IPv4, /128 for IPv6
+		if singleIP.To4() != nil {
+			return singleIP.String() + "/32", nil
+		}
+		return singleIP.String() + "/128", nil
+	}
+
+	return "", fmt.Errorf("잘못된 IP 또는 CIDR 형식입니다: %s", input)
 }
 
 // DeleteAllowIP removes an IP from whitelist
@@ -241,13 +273,21 @@ func (h *Handler) DeleteAllowIP(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"success": true})
 }
 
-// AddBanIP adds an IP to blacklist
+// AddBanIP adds an IP or CIDR to blacklist
 func (h *Handler) AddBanIP(c *fiber.Ctx) error {
 	var input models.BanIP
 	if err := c.BodyParser(&input); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid input"})
 	}
+
+	// Validate and normalize IP/CIDR
+	normalized, err := validateAndNormalizeCIDR(input.IP)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	input.IP = normalized
 	input.IsAuto = false
+
 	if err := h.DB.Create(&input).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
