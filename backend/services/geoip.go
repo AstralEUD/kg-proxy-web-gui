@@ -344,6 +344,15 @@ func (g *GeoIPService) downloadGeoLite2() error {
 		return fmt.Errorf("no MaxMind license key configured")
 	}
 
+	// Rate limit check: Don't download if we have a recent file (< 24h)
+	dbPath := filepath.Join(g.dbPath, "GeoLite2-Country.mmdb")
+	if info, err := os.Stat(dbPath); err == nil {
+		if time.Since(info.ModTime()) < 24*time.Hour {
+			system.Info("Skipping GeoIP download: existing database is fresh (%v old)", time.Since(info.ModTime()).Round(time.Minute))
+			return nil
+		}
+	}
+
 	url := fmt.Sprintf(
 		"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=%s&suffix=tar.gz",
 		g.licenseKey,

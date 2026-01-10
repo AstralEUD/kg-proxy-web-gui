@@ -74,6 +74,9 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		settings.ID = 1
 	}
 
+	// Capture old key for change detection
+	oldLicenseKey := settings.MaxMindLicenseKey
+
 	// Update fields
 	settings.GlobalProtection = input.GlobalProtection
 	settings.BlockVPN = input.BlockVPN
@@ -129,9 +132,9 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	system.Info("Security settings updated: eBPF=%v, Protection=%d", settings.EBPFEnabled, settings.ProtectionLevel)
 	AddEvent("success", "Security settings applied")
 
-	// Update GeoIP service with new license key if provided
-	if input.MaxMindLicenseKey != "" && h.Firewall != nil && h.Firewall.GeoIP != nil {
-		system.Info("Updating MaxMind license key and refreshing GeoIP database...")
+	// Update GeoIP service with new license key only if it changed
+	if input.MaxMindLicenseKey != "" && input.MaxMindLicenseKey != oldLicenseKey && h.Firewall != nil && h.Firewall.GeoIP != nil {
+		system.Info("MaxMind license key updated, refreshing database...")
 		h.Firewall.GeoIP.SetLicenseKey(input.MaxMindLicenseKey)
 		if err := h.Firewall.GeoIP.RefreshGeoIP(); err != nil {
 			system.Warn("Failed to refresh GeoIP database: %v", err)

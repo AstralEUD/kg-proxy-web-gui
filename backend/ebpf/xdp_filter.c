@@ -290,11 +290,15 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         
         if (rl) {
             __u64 elapsed = now - rl->last_update;
-            __u64 tokens_per_ns = (*rate_limit_pps) / 1000000000ULL; 
-            if (tokens_per_ns == 0) tokens_per_ns = 1;
-            
-            __u64 new_tokens = rl->tokens + (elapsed * tokens_per_ns);
-            if (new_tokens > *rate_limit_pps) new_tokens = *rate_limit_pps;
+            if (elapsed > 1000000000ULL) {
+                new_tokens = *rate_limit_pps;
+            } else {
+                // Refill tokens: (elapsed_ns * rate_pps) / 1e9
+                // Safe from overflow because elapsed <= 1s
+                __u64 tokens_to_add = (elapsed * (*rate_limit_pps)) / 1000000000ULL;
+                new_tokens = rl->tokens + tokens_to_add;
+                if (new_tokens > *rate_limit_pps) new_tokens = *rate_limit_pps;
+            }
             
             if (new_tokens < 1) {
                 // Rate Limited
