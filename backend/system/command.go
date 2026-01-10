@@ -65,3 +65,29 @@ func Ping(ip string) bool {
 	}
 	return cmd.Run() == nil
 }
+
+// GetDefaultInterface returns the default network interface name (e.g., "eth0", "ens3")
+func GetDefaultInterface() string {
+	if runtime.GOOS == "windows" {
+		return "" // Not applicable on Windows
+	}
+
+	// Try to get default interface from ip route
+	cmd := exec.Command("ip", "route", "show", "default")
+	out, err := cmd.Output()
+	if err != nil {
+		return "eth0" // Fallback
+	}
+
+	// Parse "default via X.X.X.X dev eth0"
+	fields := string(out)
+	if len(fields) > 0 {
+		// Simple parsing: look for "dev <interface>"
+		parts := exec.Command("sh", "-c", "ip route show default | awk '/default/ {print $5}'")
+		if iface, err := parts.Output(); err == nil && len(iface) > 0 {
+			return string(iface[:len(iface)-1]) // Remove trailing newline
+		}
+	}
+
+	return "eth0" // Default fallback
+}
