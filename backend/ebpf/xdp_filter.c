@@ -290,6 +290,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         
         if (rl) {
             __u64 elapsed = now - rl->last_update;
+            __u64 new_tokens;
             if (elapsed > 1000000000ULL) {
                 new_tokens = *rate_limit_pps;
             } else {
