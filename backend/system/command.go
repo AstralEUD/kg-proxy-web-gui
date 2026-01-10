@@ -3,6 +3,7 @@ package system
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -74,14 +75,29 @@ func GetDefaultInterface() string {
 		return ""
 	}
 
-	// 1. Get all interfaces
+	// Method 1: Robust parsing of /proc/net/route to find default gateway
+	data, err := os.ReadFile("/proc/net/route")
+	if err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				// Field 0: Interface Name
+				// Field 1: Destination (Hex)
+				// Check for Default Gateway (Destination 00000000)
+				if fields[1] == "00000000" {
+					return fields[0]
+				}
+			}
+		}
+	}
+
+	// Method 2: Fallback to net.Interfaces() heuristic
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "eth0"
 	}
 
-	// 2. Look for the first non-loopback interface that is up
-	// and likely has the default gateway (usually eth0, ens3, enp1s0, etc.)
 	for _, iface := range ifaces {
 		// Skip loopback and down interfaces
 		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
@@ -100,5 +116,6 @@ func GetDefaultInterface() string {
 		}
 	}
 
-	return "eth0" // Final fallback
+	// Last resort
+	return "eth0"
 }
