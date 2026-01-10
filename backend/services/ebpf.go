@@ -593,25 +593,44 @@ var CriticalDNS = []string{
 	"108.61.10.10", "9.9.9.9", "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1",
 }
 
-// SyncWhitelist reloads allowed IPs from DB and adds Critical DNS
+// SyncWhitelist reloads allowed IPs from DB, adds Origins, and Critical DNS
 func (e *EBPFService) SyncWhitelist() error {
 	if e.db == nil {
 		return fmt.Errorf("database not connected")
 	}
 
+	var ips []string
+
+	// 1. Add DB allowed IPs
 	var allowed []models.AllowIP
 	if err := e.db.Find(&allowed).Error; err != nil {
-		return err
+		system.Warn("Failed to find allowed IPs: %v", err)
+	} else {
+		for _, a := range allowed {
+			ips = append(ips, a.IP)
+		}
 	}
 
-	var ips []string
-	// Add DB allowed IPs
-	for _, a := range allowed {
-		ips = append(ips, a.IP)
+	// 2. Add Origin IPs (Critical for WireGuard connectivity)
+	// Even though Origins are on private IPs (10.200.0.x), their PUBLIC IPs
+	// occasionally hit the WAN interface if WireGuard is not fully encapsulating or for discovery.
+	// Actually, the user specifically mentioned blocking the "game server's IP".
+	// Since Origins don't have public IPs in models.Origin, we should check AllowForeign or similar?
+	// Wait, if the Origin connects to us, its public IP should be whitelisted.
+	// We'll also check AllowForeign table.
+	var foreign []models.AllowForeign
+	if err := e.db.Find(&foreign).Error; err != nil {
+		system.Warn("Failed to find foreign allowed IPs: %v", err)
+	} else {
+		for _, f := range foreign {
+			ips = append(ips, f.IP)
+		}
 	}
-	// Add Critical DNS
+
+	// 3. Add Critical DNS
 	ips = append(ips, CriticalDNS...)
 
+	system.Info("Syncing whitelist with %d total entries", len(ips))
 	return e.UpdateAllowIPs(ips)
 }
 

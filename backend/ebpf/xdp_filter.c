@@ -200,6 +200,14 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // ============================================================
+    // CRITICAL: Bypass Essential Services & ICMP
+    // (Prevents dropping WireGuard, SSH, Management API, and Pings)
+    // ============================================================
+    if (dst_port == 51820 || dst_port == 22 || dst_port == 8080) return XDP_PASS;
+    if (protocol == IPPROTO_ICMP) return XDP_PASS;
+
+
+    // ============================================================
     // OPTIMIZATION: Check Blacklist EARLY (with LPM support)
     // ============================================================
     struct lpm_key b_key;
