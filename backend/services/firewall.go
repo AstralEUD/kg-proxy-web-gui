@@ -76,18 +76,22 @@ func (s *FirewallService) ApplyRules() error {
 	}
 
 	// Check Maintenance Mode: If active, bypass all blocking
+	// Check Maintenance Mode: If active, bypass all blocking
 	if settings.MaintenanceUntil != nil && settings.MaintenanceUntil.After(time.Now()) {
 		system.Warn("🔧 Maintenance Mode Active until %s - Bypassing all blocking rules", settings.MaintenanceUntil.Format("15:04:05"))
 		s.inMaintenance = true
 		if s.EBPF != nil {
-			s.EBPF.UpdateMaintenanceMode(true)
+			// CRITICAL: Completely Disable XDP in Maintenance Mode to rule out filter issues
+			s.EBPF.Disable()
 		}
 		// Apply minimal rules (ACCEPT all)
 		return s.applyMaintenanceMode()
 	}
 	s.inMaintenance = false
-	if s.EBPF != nil {
-		s.EBPF.UpdateMaintenanceMode(false)
+	if s.EBPF != nil && settings.EBPFEnabled {
+		// Re-enable XDP if it was disabled by maintenance
+		s.EBPF.Enable()
+		s.EBPF.UpdateMaintenanceMode(false) // Reset bypass just in case
 	}
 
 	// Update flood protection level
@@ -304,9 +308,6 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// 1-5c. Limit ICMP (Ping) to prevent flood
 		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m limit --limit 2/second -j ACCEPT\n")
 		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
-
-		// 1-5d. Block empty UDP packets (Length check)
-		sb.WriteString("-A PREROUTING -p udp -m length --length 0:28 -j DROP\n")
 
 		// 1-5e. TCP RST Flood Protection
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT\n")
