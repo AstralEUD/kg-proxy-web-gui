@@ -1,13 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"kg-proxy-web-gui/backend/handlers"
 	"kg-proxy-web-gui/backend/models"
 	"kg-proxy-web-gui/backend/services"
 	"kg-proxy-web-gui/backend/system"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/gofiber/fiber/v2"
@@ -163,6 +167,21 @@ func main() {
 		system.Info("Discord webhook configured")
 	}
 
+	// Initialize System Monitor
+	sysMonitor := services.NewSystemMonitor(webhookService)
+	sysMonitor.Start()
+
+	// Initialize Daily Traffic Reporter
+	dailyReporter := services.NewDailyReporter(db, webhookService)
+	dailyReporter.Start()
+
+	// Initialize Health Monitor (Origin Connectivity)
+	healthMonitor := services.NewHealthMonitor(db, webhookService)
+	healthMonitor.Start()
+
+	// Set Webhook for GeoIP Alerts
+	geoipService.SetWebhookService(webhookService)
+
 	// Connect dependencies for Flood Protection (Logging & Alerts)
 	floodProtect.SetServices(db, webhookService, geoipService)
 
@@ -275,5 +294,39 @@ func main() {
 	// Start
 	system.Info("Server starting on :8080 (Mode: %s)", executor.GetOS())
 	log.Println("Server starting on :8080 (Mode: " + executor.GetOS() + ")")
-	log.Fatal(app.Listen(":8080"))
+
+	// Send Startup Alert
+	go func() {
+		// Wait a bit for server to be fully up
+		time.Sleep(2 * time.Second)
+		if webhookService.IsEnabled() {
+			sysInfo := services.NewSysInfoService()
+			publicIP := sysInfo.GetPublicIP()
+			msg := fmt.Sprintf("KG-Proxy backend is now running on **%s** (%s)\nPublic IP: `%s`",
+				executor.GetOS(), time.Now().Format("2006-01-02 15:04:05"), publicIP)
+			webhookService.SendSystemAlert("🚀 Server Started", msg, services.ColorGreen)
+		}
+	}()
+
+	// Graceful Shutdown Handling
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-c // Wait for signal
+		system.Info("Gracefully shutting down...")
+
+		sysMonitor.Stop()
+
+		// Send Shutdown Alert
+		if webhookService.IsEnabled() {
+			webhookService.SendSystemAlert("🛑 Server Stopping", "KG-Proxy backend is shutting down...", services.ColorOrange)
+		}
+
+		_ = app.Shutdown()
+	}()
+
+	if err := app.Listen(":8080"); err != nil {
+		log.Fatal(err)
+	}
 }

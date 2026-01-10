@@ -34,6 +34,7 @@ type GeoIPService struct {
 	ipInfoAPIKey string
 	ipInfoCache  map[string]*IPIntelligenceResult // Cache for 24h
 	cacheExpiry  map[string]time.Time
+	webhook      *WebhookService
 }
 
 // IPIntelligenceResult represents the result of an IP intelligence check
@@ -78,6 +79,16 @@ func NewGeoIPService() *GeoIPService {
 func (g *GeoIPService) SetLicenseKey(key string) {
 	g.mu.Lock()
 	g.licenseKey = key
+	g.mu.Unlock()
+}
+
+// webhookService for alerts
+var webhookService *WebhookService
+
+// SetWebhookService sets the webhook service for alerts
+func (g *GeoIPService) SetWebhookService(ws *WebhookService) {
+	g.mu.Lock()
+	g.webhook = ws
 	g.mu.Unlock()
 }
 
@@ -184,6 +195,9 @@ func (g *GeoIPService) StartAutoUpdateScheduler() {
 					system.Warn("Auto-refresh GeoIP failed: %v", err)
 				} else {
 					system.Info("GeoIP database auto-refreshed successfully")
+					if g.webhook != nil && g.webhook.IsEnabled() {
+						g.webhook.SendSystemAlert("🌍 GeoIP Database Updated", "The MaxMind GeoLite2 database has been successfully updated.", ColorBlue)
+					}
 				}
 
 				// Also refresh TOR exit nodes

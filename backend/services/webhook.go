@@ -50,7 +50,7 @@ type DiscordWebhookPayload struct {
 func NewWebhookService() *WebhookService {
 	return &WebhookService{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 	}
 }
@@ -130,16 +130,54 @@ func (w *WebhookService) SendTestAlert() error {
 		return fmt.Errorf("webhook not configured")
 	}
 
+	sysInfo := NewSysInfoService()
+	uptime := sysInfo.GetUptime()
+	cpu := sysInfo.GetCPUUsage()
+	ram := sysInfo.GetMemoryUsage()
+	disk := sysInfo.GetDiskUsage()
+	publicIP := sysInfo.GetPublicIP()
+
+	// Check if running on Windows
+	osType := "Linux"
+	if system.IsWindows() {
+		osType = "Windows"
+	}
+
 	embed := DiscordEmbed{
 		Title:       "✅ Webhook Test",
 		Description: "Discord webhook is configured correctly!",
 		Color:       ColorGreen,
 		Fields: []DiscordEmbedField{
 			{Name: "Status", Value: "Connected", Inline: true},
-			{Name: "Server Time", Value: time.Now().Format("2006-01-02 15:04:05"), Inline: true},
+			{Name: "System", Value: osType, Inline: true},
+			{Name: "Uptime", Value: uptime, Inline: true},
+			{Name: "CPU Usage", Value: fmt.Sprintf("%d%%", cpu), Inline: true},
+			{Name: "Memory Usage", Value: fmt.Sprintf("%d%%", ram), Inline: true},
+			{Name: "Disk Usage", Value: fmt.Sprintf("%d%%", disk), Inline: true},
+			{Name: "Public IP", Value: fmt.Sprintf("`%s`", publicIP), Inline: true},
+			{Name: "Time", Value: time.Now().Format("15:04:05"), Inline: true},
 		},
 		Footer: &DiscordEmbedFooter{
 			Text: "KG-Proxy Security",
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	return w.sendEmbed(embed)
+}
+
+// SendSystemAlert sends a generic system alert to Discord
+func (w *WebhookService) SendSystemAlert(title, message string, color int) error {
+	if !w.IsEnabled() {
+		return nil
+	}
+
+	embed := DiscordEmbed{
+		Title:       title,
+		Description: message,
+		Color:       color,
+		Footer: &DiscordEmbedFooter{
+			Text: "KG-Proxy System",
 		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
