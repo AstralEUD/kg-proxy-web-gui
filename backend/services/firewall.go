@@ -427,8 +427,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		}
 	}
 
-	// Masquerade for WireGuard outbound
-	sb.WriteString(fmt.Sprintf("-A POSTROUTING -s 10.200.0.0/24 -o %s -j MASQUERADE\n", eth))
+	// Masquerade for WireGuard outbound (Interface Agnostic)
+	// Allow any traffic from WireGuard subnet to be masqueraded when leaving ANY interface
+	sb.WriteString("-A POSTROUTING -s 10.200.0.0/24 -j MASQUERADE\n")
 	sb.WriteString("COMMIT\n")
 
 	// ==========================================
@@ -464,9 +465,9 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	// Forwarding rules (Critical for NAT)
 	// Allow forwarded traffic that passed Mangle checks
-	// Allow NEW connections from wg0 (Origin) to eth0 (Internet) for updates/APIs
-	sb.WriteString(fmt.Sprintf("-A FORWARD -i %s -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n", eth))
-	sb.WriteString(fmt.Sprintf("-A FORWARD -i wg0 -o %s -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n", eth))
+	// Relaxed rules: Allow forwarding between WireGuard and ANY interface
+	sb.WriteString("-A FORWARD -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	sb.WriteString("-A FORWARD -i wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
 
 	sb.WriteString("COMMIT\n")
 
@@ -486,12 +487,8 @@ func (s *FirewallService) applyMaintenanceMode() error {
 	s.Executor.Execute("iptables", "-t", "mangle", "-F")
 
 	// DO NOT flush NAT table completely as it contains game port forwarding
-	// Just ensure the base NAT for WireGuard is there
-	eth := system.GetDefaultInterface()
-	if eth != "" {
-		// Ensure MASQUERADE is there but don't wipe DNAT rules
-		s.Executor.Execute("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", eth, "-j", "MASQUERADE")
-	}
+	// Just ensure the base NAT for WireGuard is there (Interface Agnostic)
+	s.Executor.Execute("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", "10.200.0.0/24", "-j", "MASQUERADE")
 
 	// Set default ACCEPT policies
 	s.Executor.Execute("iptables", "-P", "INPUT", "ACCEPT")
