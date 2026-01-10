@@ -2,8 +2,10 @@ package system
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // IsWindows returns true if the current OS is Windows
@@ -66,28 +68,37 @@ func Ping(ip string) bool {
 	return cmd.Run() == nil
 }
 
-// GetDefaultInterface returns the default network interface name (e.g., "eth0", "ens3")
+// GetDefaultInterface returns the default network interface name (e.g., "eth0", "enp1s0")
 func GetDefaultInterface() string {
 	if runtime.GOOS == "windows" {
-		return "" // Not applicable on Windows
+		return ""
 	}
 
-	// Try to get default interface from ip route
-	cmd := exec.Command("ip", "route", "show", "default")
-	out, err := cmd.Output()
+	// 1. Get all interfaces
+	ifaces, err := net.Interfaces()
 	if err != nil {
-		return "eth0" // Fallback
+		return "eth0"
 	}
 
-	// Parse "default via X.X.X.X dev eth0"
-	fields := string(out)
-	if len(fields) > 0 {
-		// Simple parsing: look for "dev <interface>"
-		parts := exec.Command("sh", "-c", "ip route show default | awk '/default/ {print $5}'")
-		if iface, err := parts.Output(); err == nil && len(iface) > 0 {
-			return string(iface[:len(iface)-1]) // Remove trailing newline
+	// 2. Look for the first non-loopback interface that is up
+	// and likely has the default gateway (usually eth0, ens3, enp1s0, etc.)
+	for _, iface := range ifaces {
+		// Skip loopback and down interfaces
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		// Skip WireGuard and virtual interfaces
+		name := strings.ToLower(iface.Name)
+		if strings.HasPrefix(name, "wg") || strings.HasPrefix(name, "lo") || strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") {
+			continue
+		}
+
+		// Most VPS use ethX, ensX, enpX
+		if strings.HasPrefix(name, "eth") || strings.HasPrefix(name, "en") || strings.HasPrefix(name, "es") {
+			return iface.Name
 		}
 	}
 
-	return "eth0" // Default fallback
+	return "eth0" // Final fallback
 }

@@ -619,9 +619,15 @@ func (e *EBPFService) UpdateBlockedIPs(ips []string) error {
 	}
 
 	for _, ipStr := range ips {
+		// Try single IP first
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
-			continue
+			// Try CIDR
+			if subIP, _, err := net.ParseCIDR(ipStr); err == nil {
+				ip = subIP
+			} else {
+				continue
+			}
 		}
 
 		// Use BigEndian
@@ -686,9 +692,15 @@ func (e *EBPFService) UpdateAllowIPs(ips []string) error {
 	}
 
 	for _, ipStr := range ips {
+		// Try single IP first
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
-			continue
+			// Try CIDR
+			if subIP, _, err := net.ParseCIDR(ipStr); err == nil {
+				ip = subIP
+			} else {
+				continue
+			}
 		}
 		ipUint := ipToUint32(ip)
 		val := uint32(1)

@@ -236,8 +236,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	var sb strings.Builder
 
 	// Detect primary interface
-	sysInfo := NewSysInfoService()
-	eth := sysInfo.GetPrimaryInterface()
+	eth := system.GetDefaultInterface()
 
 	// ==========================================
 	// 1. Mangle Table (Advanced Packet Filter)
@@ -463,22 +462,23 @@ func (s *FirewallService) saveRulesToFile(path, content string) error {
 func (s *FirewallService) applyMaintenanceMode() error {
 	system.Info("Applying Maintenance Mode - All blocking disabled")
 
-	// Flush all iptables rules
+	// Flush Filter and Mangle tables (Blocking happens here)
 	s.Executor.Execute("iptables", "-F")
 	s.Executor.Execute("iptables", "-t", "mangle", "-F")
-	s.Executor.Execute("iptables", "-t", "nat", "-F")
+
+	// DO NOT flush NAT table completely as it contains game port forwarding
+	// Just ensure the base NAT for WireGuard is there
+	eth := system.GetDefaultInterface()
+	if eth != "" {
+		// Ensure MASQUERADE is there but don't wipe DNAT rules
+		s.Executor.Execute("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", eth, "-j", "MASQUERADE")
+	}
 
 	// Set default ACCEPT policies
 	s.Executor.Execute("iptables", "-P", "INPUT", "ACCEPT")
 	s.Executor.Execute("iptables", "-P", "FORWARD", "ACCEPT")
 	s.Executor.Execute("iptables", "-P", "OUTPUT", "ACCEPT")
 
-	// Keep basic NAT for WireGuard forwarding
-	eth := system.GetDefaultInterface()
-	if eth != "" {
-		s.Executor.Execute("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", eth, "-j", "MASQUERADE")
-	}
-
-	system.Warn("⚠️ Maintenance Mode: Firewall is DISABLED - All traffic allowed")
+	system.Warn("⚠️ Maintenance Mode: Firewall is DISABLED - All traffic allowed (Port Forwarding Preserved)")
 	return nil
 }
