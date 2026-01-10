@@ -27,6 +27,12 @@ struct {
     __type(value, struct packet_stats);
 } ip_stats SEC(".maps");
 
+// LPM Trie Key - Standardized for IPv4
+struct lpm_key {
+    __u32 prefixlen;
+    __u8  data[4]; // Use byte array to match network byte order exactly
+};
+
 // BPF map for blocked IPs (using LPM Trie for CIDR support)
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
@@ -35,12 +41,6 @@ struct {
     __type(key, struct lpm_key);
     __type(value, __u32); // 1 = blocked
 } blocked_ips SEC(".maps");
-
-// LPM Trie Key
-struct lpm_key {
-    __u32 prefixlen;
-    __u32 data;
-};
 
 // BPF map for allowed countries (GeoIP)
 struct {
@@ -60,7 +60,39 @@ struct {
     __type(value, __u32); // 1 = allowed
 } white_list SEC(".maps");
 
-// Global statistics
+// ... (stats maps remain same)
+
+// Helper to copy IP to key
+static __always_inline void set_key_ipv4(struct lpm_key *key, __u32 ip) {
+    key->prefixlen = 32;
+    // IP is already in Network Byte Order (src_ip). 
+    // We copy it byte-by-byte to data[0..3].
+    // Note: __builtin_memcpy might be optimized out or cause issues in older LLVM, 
+    // manual assignment is safer for BPF just to be sure.
+    // ip (u32) is 0xAABBCCDD (if viewed as int), but in memory it is AA BB CC DD.
+    // We want data[0]=AA, data[1]=BB...
+    // Actually, src_ip variable is u32. 'ip' arg is u32.
+    // We cast the pointer to u8* to copy bytes.
+    __u8 *bytes = (__u8 *)&ip;
+    key->data[0] = bytes[0];
+    key->data[1] = bytes[1];
+    key->data[2] = bytes[2];
+    key->data[3] = bytes[3];
+}
+
+SEC("xdp")
+int xdp_traffic_filter(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+
+    __u32 src_ip = 0;
+    __u16 protocol = 0;
+    __u16 dst_port = 0;
+
+    // Parse packet
+    if (parse_ip_packet(data, data_end, &src_ip, &protocol, &dst_port) < 0)
+        return XDP_PASS;
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 10);
@@ -190,7 +222,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // ============================================================
     // OPTIMIZATION: Check Blacklist EARLY (with LPM support)
     // ============================================================
-    struct lpm_key b_key = { .prefixlen = 32, .data = src_ip };
+    struct lpm_key b_key;
+    set_key_ipv4(&b_key, src_ip);
     __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &b_key);
     if (blocked && *blocked == 1) {
         // Still count global stats to know we are under attack
@@ -213,7 +246,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // ============================================================
     // OPTIMIZATION: Check Whitelist EARLY (with LPM support)
     // ============================================================
-    struct lpm_key w_key = { .prefixlen = 32, .data = src_ip };
+    struct lpm_key w_key;
+    set_key_ipv4(&w_key, src_ip);
     __u32 *whitelisted = bpf_map_lookup_elem(&white_list, &w_key);
     if (whitelisted) {
         // Count global stats
@@ -371,9 +405,13 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // 7. GeoIP Check (Most Expensive - Last)
-    struct lpm_key geo_key = { .prefixlen = 32, .data = src_ip };
+    struct lpm_key geo_key;
+    set_key_ipv4(&geo_key, src_ip);
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);
     if (!country) {
+        // Debug logging (only enabled if needed via compile flag, but kept simple here)
+        // bpf_printk("GeoIP Block: %x", src_ip);
+        
         if (stats) stats->blocked = 1;
         key = STAT_BLOCKED;
         __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
