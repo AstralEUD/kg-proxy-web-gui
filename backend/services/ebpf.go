@@ -842,6 +842,15 @@ type PortStats struct {
 
 // UpdateConfig updates the eBPF config map with current settings
 func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
+	if e.objs == nil {
+		return nil
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
 	// Config map indices
 	const (
 		configHardBlocking    = uint32(0)
