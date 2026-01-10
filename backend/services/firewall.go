@@ -277,6 +277,10 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// Allow all WireGuard handshake/tunnel packets from Any IP (Public Peers)
 		sb.WriteString("-A PREROUTING -p udp --dport 51820 -j ACCEPT\n")
 
+		// 0-1. TCP MSS Clamping (Critical for VPN stability)
+		// Clamp MSS to PMTU to prevent fragmentation/drops of large packets inside tunnel
+		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
+
 		// 1-1. Early Drop: Invalid Packets
 		sb.WriteString("-A PREROUTING -m conntrack --ctstate INVALID -j DROP\n")
 
