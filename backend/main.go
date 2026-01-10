@@ -135,6 +135,9 @@ func main() {
 	ebpfService.SetGeoIPService(geoipService) // Connect GeoIP to eBPF
 	ebpfService.SetDatabase(db)               // Connect DB for traffic snapshots
 
+	// Connect Firewall to eBPF for coordinated maintenance mode
+	fwService.SetEBPF(ebpfService)
+
 	// 4. Initial Firewall Application
 	// This ensures management ports are open even if the DB was empty
 	// CRITICAL: This must run BEFORE eBPF Enable to ensure GeoIP CIDRs are downloaded and ready

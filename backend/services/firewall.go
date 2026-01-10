@@ -16,6 +16,7 @@ type FirewallService struct {
 	Executor     system.CommandExecutor
 	GeoIP        *GeoIPService
 	FloodProtect *FloodProtection
+	EBPF         *EBPFService
 
 	inMaintenance bool // internal state to track if we're currently in maintenance mode
 }
@@ -28,6 +29,10 @@ func NewFirewallService(db *gorm.DB, exec system.CommandExecutor, geoip *GeoIPSe
 		FloodProtect:  flood,
 		inMaintenance: false,
 	}
+}
+
+func (s *FirewallService) SetEBPF(ebpf *EBPFService) {
+	s.EBPF = ebpf
 }
 
 // StartMaintenanceWatcher starts a background loop to check for maintenance expiration
@@ -74,10 +79,16 @@ func (s *FirewallService) ApplyRules() error {
 	if settings.MaintenanceUntil != nil && settings.MaintenanceUntil.After(time.Now()) {
 		system.Warn("🔧 Maintenance Mode Active until %s - Bypassing all blocking rules", settings.MaintenanceUntil.Format("15:04:05"))
 		s.inMaintenance = true
+		if s.EBPF != nil {
+			s.EBPF.UpdateMaintenanceMode(true)
+		}
 		// Apply minimal rules (ACCEPT all)
 		return s.applyMaintenanceMode()
 	}
 	s.inMaintenance = false
+	if s.EBPF != nil {
+		s.EBPF.UpdateMaintenanceMode(false)
+	}
 
 	// Update flood protection level
 	if s.FloodProtect != nil {
@@ -131,6 +142,11 @@ func (s *FirewallService) ApplyRules() error {
 	if settings.SYNCookies && s.FloodProtect != nil {
 		s.FloodProtect.EnableSYNCookies()
 		s.FloodProtect.SetConntrackLimits()
+	}
+
+	// Sync eBPF Whitelist
+	if s.EBPF != nil {
+		s.EBPF.SyncWhitelist()
 	}
 
 	return nil
@@ -299,10 +315,6 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		// 1-5f. Block SYN-ACK Flood
 		sb.WriteString("-A PREROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m conntrack --ctstate NEW -j DROP\n")
 
-		// 1-5h. UDP Flood Protection (Per-IP Rate Limit)
-		sb.WriteString("-A PREROUTING -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 90000/sec --hashlimit-burst 180000 -j ACCEPT\n")
-		sb.WriteString("-A PREROUTING -p udp -j DROP\n")
-
 		// 1-5i. ICMP Flood Protection (Per-IP)
 		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp_flood --hashlimit-mode srcip --hashlimit-upto 5/sec --hashlimit-burst 10 -j ACCEPT\n")
 		sb.WriteString("-A PREROUTING -p icmp --icmp-type echo-request -j DROP\n")
@@ -349,6 +361,13 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A GEO_GUARD -m set --match-set ban src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set vpn_proxy src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set tor_exits src -j DROP\n")
+
+	// 1-5h. UDP Flood Protection (Per-IP Rate Limit) - Only for IPs that haven't matched yet
+	// Note: Whitelisted and Established IPs already returned before this point.
+	if settings.GlobalProtection {
+		sb.WriteString("-A GEO_GUARD -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 90000/sec --hashlimit-burst 180000 -j RETURN\n")
+		sb.WriteString("-A GEO_GUARD -p udp -j DROP\n")
+	}
 	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")
 	// Drop everything else that didn't match ALLOW sets

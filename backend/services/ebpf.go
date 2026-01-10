@@ -621,20 +621,31 @@ func (e *EBPFService) UpdateBlockedIPs(ips []string) error {
 	for _, ipStr := range ips {
 		// Try single IP first
 		ip := net.ParseIP(ipStr)
+		prefixLen := uint32(32)
 		if ip == nil {
 			// Try CIDR
-			if subIP, _, err := net.ParseCIDR(ipStr); err == nil {
-				ip = subIP
+			var ipNet *net.IPNet
+			var err error
+			ip, ipNet, err = net.ParseCIDR(ipStr)
+			if err == nil {
+				ones, _ := ipNet.Mask.Size()
+				prefixLen = uint32(ones)
 			} else {
 				continue
 			}
 		}
 
-		// Use BigEndian
-		ipUint := ipToUint32(ip)
-		blocked := uint32(1)
+		// Use LPM Key Structure
+		key := struct {
+			PrefixLen uint32
+			Data      [4]byte
+		}{
+			PrefixLen: prefixLen,
+		}
+		copy(key.Data[:], ip.To4())
 
-		if err := objs.BlockedIps.Put(ipUint, blocked); err != nil {
+		blocked := uint32(1)
+		if err := objs.BlockedIps.Put(key, blocked); err != nil {
 			system.Warn("Failed to add blocked IP %s: %v", ipStr, err)
 		}
 	}
@@ -694,18 +705,31 @@ func (e *EBPFService) UpdateAllowIPs(ips []string) error {
 	for _, ipStr := range ips {
 		// Try single IP first
 		ip := net.ParseIP(ipStr)
+		prefixLen := uint32(32)
 		if ip == nil {
 			// Try CIDR
-			if subIP, _, err := net.ParseCIDR(ipStr); err == nil {
-				ip = subIP
+			var ipNet *net.IPNet
+			var err error
+			ip, ipNet, err = net.ParseCIDR(ipStr)
+			if err == nil {
+				ones, _ := ipNet.Mask.Size()
+				prefixLen = uint32(ones)
 			} else {
 				continue
 			}
 		}
-		ipUint := ipToUint32(ip)
-		val := uint32(1)
 
-		if err := objs.WhiteList.Put(ipUint, val); err != nil {
+		// Use LPM Key Structure
+		key := struct {
+			PrefixLen uint32
+			Data      [4]byte
+		}{
+			PrefixLen: prefixLen,
+		}
+		copy(key.Data[:], ip.To4())
+
+		val := uint32(1)
+		if err := objs.WhiteList.Put(key, val); err != nil {
 			system.Warn("Failed to add whitelist IP %s: %v", ipStr, err)
 		}
 	}
@@ -818,19 +842,11 @@ type PortStats struct {
 
 // UpdateConfig updates the eBPF config map with current settings
 func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
-	if e.objs == nil {
-		return nil
-	}
-
-	objs, ok := e.objs.(*xdpObjects)
-	if !ok {
-		return nil
-	}
-
 	// Config map indices
 	const (
-		configHardBlocking = uint32(0)
-		configRateLimitPPS = uint32(1)
+		configHardBlocking    = uint32(0)
+		configRateLimitPPS    = uint32(1)
+		configMaintenanceMode = uint32(2)
 	)
 
 	// Set hard blocking mode
@@ -849,6 +865,31 @@ func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
 	}
 
 	system.Info("Updated eBPF config: hard_blocking=%v, rate_limit_pps=%d", hardBlocking, rateLimitPPS)
+	return nil
+}
+
+// UpdateMaintenanceMode updates the eBPF bypass for maintenance mode
+func (e *EBPFService) UpdateMaintenanceMode(enabled bool) error {
+	if e.objs == nil {
+		return nil
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
+	const configMaintenanceMode = uint32(2)
+	val := uint32(0)
+	if enabled {
+		val = 1
+	}
+
+	if err := objs.Config.Put(configMaintenanceMode, val); err != nil {
+		system.Warn("Failed to update maintenance mode config: %v", err)
+		return err
+	}
+
 	return nil
 }
 

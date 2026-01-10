@@ -46,8 +46,8 @@ func (s *FirewallService) ApplyHardening(level int) error {
 		"net.ipv4.tcp_keepalive_intvl":  "15",
 
 		// === Security & Anti-Spoofing ===
-		"net.ipv4.conf.all.rp_filter":        "1", // Reverse Path Filtering
-		"net.ipv4.conf.default.rp_filter":    "1",
+		"net.ipv4.conf.all.rp_filter":        "2", // Loose Reverse Path Filtering (Essential for WireGuard/NAT)
+		"net.ipv4.conf.default.rp_filter":    "2",
 		"net.ipv4.conf.all.log_martians":     "0", // Disable logging to prevent dmesg flood
 		"net.ipv4.conf.default.log_martians": "0",
 

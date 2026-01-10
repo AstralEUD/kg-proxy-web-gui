@@ -27,11 +27,12 @@ struct {
     __type(value, struct packet_stats);
 } ip_stats SEC(".maps");
 
-// BPF map for blocked IPs
+// BPF map for blocked IPs (using LPM Trie for CIDR support)
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 10000);
-    __type(key, __u32);   // IP address
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, struct lpm_key);
     __type(value, __u32); // 1 = blocked
 } blocked_ips SEC(".maps");
 
@@ -50,11 +51,12 @@ struct {
     __type(value, __u32); // Country code (as integer)
 } geo_allowed SEC(".maps");
 
-// BPF map for manually allowed IPs (White List)
+// BPF map for manually allowed IPs (White List - using LPM Trie for CIDR support)
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 10000);
-    __type(key, __u32);   // IP address
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, struct lpm_key);
     __type(value, __u32); // 1 = allowed
 } white_list SEC(".maps");
 
@@ -74,8 +76,9 @@ struct {
     __type(value, __u32);
 } config SEC(".maps");
 
-#define CONFIG_HARD_BLOCKING 0
-#define CONFIG_RATE_LIMIT_PPS 1
+#define CONFIG_HARD_BLOCKING    0
+#define CONFIG_RATE_LIMIT_PPS   1
+#define CONFIG_MAINTENANCE_MODE 2
 
 // Rate limiting per-IP (token bucket)
 struct rate_limit_entry {
@@ -177,10 +180,18 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // ============================================================
-    // OPTIMIZATION: Check Blacklist EARLY
-    // Drop known attackers immediately before updating IP Stats
+    // OPTIMIZATION: Check Maintenance Mode
     // ============================================================
-    __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
+    cfg_key = CONFIG_MAINTENANCE_MODE;
+    __u32 *m_mode = bpf_map_lookup_elem(&config, &cfg_key);
+    if (m_mode && *m_mode == 1) return XDP_PASS;
+
+
+    // ============================================================
+    // OPTIMIZATION: Check Blacklist EARLY (with LPM support)
+    // ============================================================
+    struct lpm_key b_key = { .prefixlen = 32, .data = src_ip };
+    __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &b_key);
     if (blocked && *blocked == 1) {
         // Still count global stats to know we are under attack
         key = STAT_TOTAL_PACKETS;
@@ -196,15 +207,14 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         if (blocked_count) __sync_fetch_and_add(blocked_count, 1);
 
         return XDP_DROP;
-        // SKIPPING: Port Stats, IP Stats (LRU), Whitelist, GeoIP
     }
 
 
     // ============================================================
-    // OPTIMIZATION: Check Whitelist EARLY
-    // Pass known authorized IPs immediately
+    // OPTIMIZATION: Check Whitelist EARLY (with LPM support)
     // ============================================================
-    __u32 *whitelisted = bpf_map_lookup_elem(&white_list, &src_ip);
+    struct lpm_key w_key = { .prefixlen = 32, .data = src_ip };
+    __u32 *whitelisted = bpf_map_lookup_elem(&white_list, &w_key);
     if (whitelisted) {
         // Count global stats
         key = STAT_TOTAL_PACKETS;
