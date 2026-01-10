@@ -109,10 +109,7 @@ struct {
 #define STAT_ALLOWED       3
 #define STAT_RATE_LIMITED  4
 
-static __always_inline int parse_ip_packet(struct xdp_md *ctx, __u32 *src_ip, __u16 *protocol, __u16 *dst_port) {
-    void *data_end = (void *)(long)ctx->data_end;
-    void *data = (void *)(long)ctx->data;
-
+static __always_inline int parse_ip_packet(void *data, void *data_end, __u32 *src_ip, __u16 *protocol, __u16 *dst_port) {
     // Parse Ethernet header
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
@@ -149,15 +146,18 @@ static __always_inline int parse_ip_packet(struct xdp_md *ctx, __u32 *src_ip, __
 
 SEC("xdp")
 int xdp_traffic_filter(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+
     __u32 src_ip = 0;
     __u16 protocol = 0;
     __u16 dst_port = 0;
 
     // Parse packet
-    if (parse_ip_packet(ctx, &src_ip, &protocol, &dst_port) < 0)
+    if (parse_ip_packet(data, data_end, &src_ip, &protocol, &dst_port) < 0)
         return XDP_PASS;
 
-    __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
+    __u64 pkt_size = data_end - data;
     __u32 key;
     __u32 cfg_key;
 
@@ -315,13 +315,14 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
     // 5. TCP Outbound Response Bypass
     if (protocol == IPPROTO_TCP) {
-        void *data = (void *)(long)ctx->data;
-        // Re-read data pointers to please verifier? Not strictly needed unless bounds changed
+        // Reuse 'data' pointer which is already validated by verifier as part of packet range via parse_ip_packet
+        // We know we have at least an Ethernet + IP header.
+        
+        // RE-CALCULATION IS FINE, BUT RE-LOADING data FROM ctx IS BAD.
+        // We use the initial 'data' variable.
         struct ethhdr *eth = data;
         struct iphdr *ip = (void *)(eth + 1);
-        // Bounds check optimized out as done in parse_ip_packet
         struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
-        void *data_end = (void *)(long)ctx->data_end;
 
         if ((void *)(tcp + 1) <= data_end) {
              if (tcp->ack || tcp->rst) {
@@ -336,11 +337,9 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
     // 6. Steam Query Bypass
     if (protocol == IPPROTO_UDP) {
-        void *data = (void *)(long)ctx->data;
         struct ethhdr *eth = data;
         struct iphdr *ip = (void *)(eth + 1);
         struct udphdr *udp = (void *)ip + (ip->ihl * 4);
-        void *data_end = (void *)(long)ctx->data_end;
         
         if ((void *)(udp + 1) <= data_end) {
              unsigned char *payload = (void *)(udp + 1);
