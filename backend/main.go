@@ -42,6 +42,14 @@ func main() {
 	}
 	system.Info("Database connected: %s", dbPath)
 
+	// Optimization: Enable WAL Mode for better concurrency
+	// This prevents "database is locked" errors during high traffic/logging
+	if err := db.Exec("PRAGMA journal_mode=WAL;").Error; err != nil {
+		system.Warn("Failed to enable WAL mode: %v", err)
+	} else {
+		system.Info("SQLite WAL mode enabled")
+	}
+
 	// Migrate
 	// Migrate
 	// CRITICAL: Ensure schema is up to date. Panic if migration fails.
@@ -253,7 +261,11 @@ func main() {
 		frontendPath = "/opt/kg-proxy/frontend"
 	}
 
-	app.Static("/", frontendPath)
+	app.Static("/", frontendPath, fiber.Static{
+		ByteRange: true,
+		Browse:    false,
+		MaxAge:    3600, // Cache for 1 hour to reduce reload strain
+	})
 
 	// 6. SPA Fallback: Serve index.html for all other routes
 	app.Get("/*", func(c *fiber.Ctx) error {

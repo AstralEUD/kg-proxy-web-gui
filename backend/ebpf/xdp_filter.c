@@ -158,54 +158,13 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         return XDP_PASS;
 
     __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
+    __u32 key;
+    __u32 cfg_key;
 
-    // Update global stats
-    __u32 key = STAT_TOTAL_PACKETS;
-    __u64 *total_packets = bpf_map_lookup_elem(&global_stats, &key);
-    if (total_packets)
-        __sync_fetch_and_add(total_packets, 1);
-
-    key = STAT_TOTAL_BYTES;
-    __u64 *total_bytes = bpf_map_lookup_elem(&global_stats, &key);
-    if (total_bytes)
-        __sync_fetch_and_add(total_bytes, pkt_size);
-
-    // Update per-port statistics
-    if (dst_port > 0) {
-        struct port_stats *pstats = bpf_map_lookup_elem(&port_stats, &dst_port);
-        if (pstats) {
-            __sync_fetch_and_add(&pstats->packets, 1);
-            __sync_fetch_and_add(&pstats->bytes, pkt_size);
-        } else {
-            struct port_stats new_pstats = {
-                .packets = 1,
-                .bytes = pkt_size,
-            };
-            bpf_map_update_elem(&port_stats, &dst_port, &new_pstats, BPF_ANY);
-        }
-    }
-
-    // --- 1. Track Statistics for ALL IPs (including Private) ---
-    struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-    
-    if (stats) {
-        __sync_fetch_and_add(&stats->packets, 1);
-        __sync_fetch_and_add(&stats->bytes, pkt_size);
-        stats->last_seen = bpf_ktime_get_ns();
-    } else {
-        struct packet_stats new_stats = {
-            .packets = 1,
-            .bytes = pkt_size,
-            .last_seen = bpf_ktime_get_ns(),
-            .blocked = 0,
-            .pad = 0, // Initialize padding
-        };
-        bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
-        // Refresh pointer after update
-        stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
-    }
-
-    // --- 2. Safety Bypass for Private/Local Networks ---
+    // ============================================================
+    // OPTIMIZATION: Early Bypass for Private/Local Networks
+    // No stats, no checks. Just pass. (Saves ~4 map lookups)
+    // ============================================================
     __u32 ip_h = bpf_ntohl(src_ip);
     // 10.0.0.0/8
     if ((ip_h & 0xFF000000) == 0x0A000000) return XDP_PASS;
@@ -216,180 +175,208 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // 127.0.0.0/8
     if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS;
 
-    // --- 3. Check Manual Whitelist (AllowIPs) ---
-    __u32 *whitelisted = bpf_map_lookup_elem(&white_list, &src_ip);
-    if (whitelisted) {
-        // Explicitly Allowed
-        key = STAT_ALLOWED;
-        __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
-        if (allowed_count)
-            __sync_fetch_and_add(allowed_count, 1);
-        return XDP_PASS;
+
+    // ============================================================
+    // OPTIMIZATION: Check Blacklist EARLY
+    // Drop known attackers immediately before updating IP Stats
+    // ============================================================
+    __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
+    if (blocked && *blocked == 1) {
+        // Still count global stats to know we are under attack
+        key = STAT_TOTAL_PACKETS;
+        __u64 *total_packets = bpf_map_lookup_elem(&global_stats, &key);
+        if (total_packets) __sync_fetch_and_add(total_packets, 1);
+
+        key = STAT_TOTAL_BYTES;
+        __u64 *total_bytes = bpf_map_lookup_elem(&global_stats, &key);
+        if (total_bytes) __sync_fetch_and_add(total_bytes, pkt_size);
+
+        key = STAT_BLOCKED;
+        __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
+        if (blocked_count) __sync_fetch_and_add(blocked_count, 1);
+
+        return XDP_DROP;
+        // SKIPPING: Port Stats, IP Stats (LRU), Whitelist, GeoIP
     }
 
-    // --- 3.5 Rate Limiting Check ---
-    __u32 cfg_key = CONFIG_RATE_LIMIT_PPS;
+
+    // ============================================================
+    // OPTIMIZATION: Check Whitelist EARLY
+    // Pass known authorized IPs immediately
+    // ============================================================
+    __u32 *whitelisted = bpf_map_lookup_elem(&white_list, &src_ip);
+    if (whitelisted) {
+        // Count global stats
+        key = STAT_TOTAL_PACKETS;
+        __u64 *total_packets = bpf_map_lookup_elem(&global_stats, &key);
+        if (total_packets) __sync_fetch_and_add(total_packets, 1);
+
+        key = STAT_TOTAL_BYTES;
+        __u64 *total_bytes = bpf_map_lookup_elem(&global_stats, &key);
+        if (total_bytes) __sync_fetch_and_add(total_bytes, pkt_size);
+
+        key = STAT_ALLOWED;
+        __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+        if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+
+        // We DO update IP stats for whitelisted users so we can see their traffic usage
+        struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
+        if (stats) {
+            __sync_fetch_and_add(&stats->packets, 1);
+            __sync_fetch_and_add(&stats->bytes, pkt_size);
+            stats->last_seen = bpf_ktime_get_ns();
+        } else {
+            struct packet_stats new_stats = {
+                .packets = 1, .bytes = pkt_size, .last_seen = bpf_ktime_get_ns(), .blocked = 0, .pad = 0,
+            };
+            bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
+        }
+
+        return XDP_PASS;
+        // SKIPPING: Rate Limit, GeoIP
+    }
+
+
+    // ============================================================
+    // STANDARD TRAFFIC PROCESSING
+    // (Only for non-local, non-blacklisted, non-whitelisted IPs)
+    // ============================================================
+
+    // 1. Update Global Stats
+    key = STAT_TOTAL_PACKETS;
+    __u64 *total_packets = bpf_map_lookup_elem(&global_stats, &key);
+    if (total_packets) __sync_fetch_and_add(total_packets, 1);
+
+    key = STAT_TOTAL_BYTES;
+    __u64 *total_bytes = bpf_map_lookup_elem(&global_stats, &key);
+    if (total_bytes) __sync_fetch_and_add(total_bytes, pkt_size);
+
+
+    // 2. Update Port Stats
+    if (dst_port > 0) {
+        struct port_stats *pstats = bpf_map_lookup_elem(&port_stats, &dst_port);
+        if (pstats) {
+            __sync_fetch_and_add(&pstats->packets, 1);
+            __sync_fetch_and_add(&pstats->bytes, pkt_size);
+        } else {
+            struct port_stats new_pstats = { .packets = 1, .bytes = pkt_size };
+            bpf_map_update_elem(&port_stats, &dst_port, &new_pstats, BPF_ANY);
+        }
+    }
+
+
+    // 3. Update IP Stats (LRU)
+    struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
+    if (stats) {
+        __sync_fetch_and_add(&stats->packets, 1);
+        __sync_fetch_and_add(&stats->bytes, pkt_size);
+        stats->last_seen = bpf_ktime_get_ns();
+    } else {
+        struct packet_stats new_stats = {
+            .packets = 1, .bytes = pkt_size, .last_seen = bpf_ktime_get_ns(), .blocked = 0, .pad = 0,
+        };
+        bpf_map_update_elem(&ip_stats, &src_ip, &new_stats, BPF_ANY);
+        // Refresh pointer
+        stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
+    }
+
+
+    // 4. Rate Limiting Check
+    cfg_key = CONFIG_RATE_LIMIT_PPS;
     __u32 *rate_limit_pps = bpf_map_lookup_elem(&config, &cfg_key);
     if (rate_limit_pps && *rate_limit_pps > 0) {
         __u64 now = bpf_ktime_get_ns();
         struct rate_limit_entry *rl = bpf_map_lookup_elem(&rate_limits, &src_ip);
         
         if (rl) {
-            // Token bucket algorithm
             __u64 elapsed = now - rl->last_update;
-            __u64 tokens_per_ns = (*rate_limit_pps) / 1000000000ULL; // Tokens per nanosecond
+            __u64 tokens_per_ns = (*rate_limit_pps) / 1000000000ULL; 
             if (tokens_per_ns == 0) tokens_per_ns = 1;
             
             __u64 new_tokens = rl->tokens + (elapsed * tokens_per_ns);
-            if (new_tokens > *rate_limit_pps) {
-                new_tokens = *rate_limit_pps; // Cap at max
-            }
+            if (new_tokens > *rate_limit_pps) new_tokens = *rate_limit_pps;
             
             if (new_tokens < 1) {
-                // No tokens, rate limited - DROP
+                // Rate Limited
                 if (stats) stats->blocked = 1;
                 key = STAT_RATE_LIMITED;
                 __u64 *rl_count = bpf_map_lookup_elem(&global_stats, &key);
-                if (rl_count)
-                    __sync_fetch_and_add(rl_count, 1);
+                if (rl_count) __sync_fetch_and_add(rl_count, 1);
                 return XDP_DROP;
             }
-            
-            // Consume token
             rl->tokens = new_tokens - 1;
             rl->last_update = now;
         } else {
-            // New entry, initialize with full bucket
-            struct rate_limit_entry new_rl = {
-                .tokens = *rate_limit_pps - 1,
-                .last_update = now,
-            };
+            struct rate_limit_entry new_rl = { .tokens = *rate_limit_pps - 1, .last_update = now };
             bpf_map_update_elem(&rate_limits, &src_ip, &new_rl, BPF_ANY);
         }
     }
 
-    // --- 4. Check Blocked List (Blacklist) ---
-    __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
-    if (blocked && *blocked == 1) {
-        if (stats) stats->blocked = 1;
 
-        // Update global blocked count
-        key = STAT_BLOCKED;
-        __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
-        if (blocked_count)
-            __sync_fetch_and_add(blocked_count, 1);
-
-        return XDP_DROP;
-    }
-
-    // --- 4.4 TCP Outbound Response Bypass (Bitwise Check) ---
-    // Allow TCP packets with ACK or RST flags set (Established/Related traffic)
-    // This allows the server to connect to external services (GitHub/Steam) even if country is blocked
-    // New connections (SYN only) are still subject to GeoIP
+    // 5. TCP Outbound Response Bypass
     if (protocol == IPPROTO_TCP) {
         void *data = (void *)(long)ctx->data;
-        void *data_end = (void *)(long)ctx->data_end;
+        // Re-read data pointers to please verifier? Not strictly needed unless bounds changed
         struct ethhdr *eth = data;
         struct iphdr *ip = (void *)(eth + 1);
+        // Bounds check optimized out as done in parse_ip_packet
+        struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+        void *data_end = (void *)(long)ctx->data_end;
 
-        if ((void *)(ip + 1) <= data_end && ip->protocol == IPPROTO_TCP) {
-             struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
-             if ((void *)(tcp + 1) <= data_end) {
-                 // Check for ACK or RST flags
-                 // tcphdr flags are mixed in bitfields, but standard layout allows access
-                 // We can access the flags byte directly if needed, or use struct fields if defined
-                 // Linux tcphdr usually has: u16 res1:4, doff:4, fin:1, syn:1, rst:1, psh:1, ack:1, urg:1, ece:1, cwr:1;
-                 // But eBPF definitions might vary. Safest is raw byte check or reliable struct.
-                 // In vmlinux.h or standard headers, flags are often in a u16.
-                 
-                 // Let's assume standard u8 flags handling or simpler approach.
-                 // ACK=16 (0x10), RST=4 (0x04) within the flags byte (13th byte of TCP header)
-                 
-                 // Using __u8 *flags = ((__u8 *)tcp) + 13; is common hack but struct field is cleaner if available.
-                 // struct tcphdr has 'ack' and 'rst' bitfields in many definitions.
-                 // However, to be safe and portable in XDP:
-                 if (tcp->ack || tcp->rst) {
-                     // Pass established/return traffic
-                     // Do NOT increment allowed stats to strictly track ONLY whitelist passes? 
-                     // Or maybe count as allowed? Let's count as allowed to see traffic flow.
+        if ((void *)(tcp + 1) <= data_end) {
+             if (tcp->ack || tcp->rst) {
+                 key = STAT_ALLOWED;
+                 __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+                 if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+                 return XDP_PASS;
+             }
+        }
+    }
+
+
+    // 6. Steam Query Bypass
+    if (protocol == IPPROTO_UDP) {
+        void *data = (void *)(long)ctx->data;
+        struct ethhdr *eth = data;
+        struct iphdr *ip = (void *)(eth + 1);
+        struct udphdr *udp = (void *)ip + (ip->ihl * 4);
+        void *data_end = (void *)(long)ctx->data_end;
+        
+        if ((void *)(udp + 1) <= data_end) {
+             unsigned char *payload = (void *)(udp + 1);
+             if ((void *)(payload + 4) <= data_end) {
+                 if (*(__u32*)payload == 0xFFFFFFFF) {
                      key = STAT_ALLOWED;
                      __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
                      if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
-
                      return XDP_PASS;
                  }
              }
         }
     }
 
-    // --- 4.5 Steam Query Bypass ---
-    // Allow A2S_INFO and other query packets (Payload starts with 0xFFFFFFFF) regardless of GeoIP
-    if (protocol == IPPROTO_UDP) {
-        void *data = (void *)(long)ctx->data;
-        void *data_end = (void *)(long)ctx->data_end;
-        struct ethhdr *eth = data;
-        struct iphdr *ip = (void *)(eth + 1);
-        
-        // Ensure IP header is valid (already checked but needed for verifier)
-        if ((void *)(ip + 1) <= data_end && ip->protocol == IPPROTO_UDP) {
-             // Calculate UDP header position safely
-             // ip->ihl is 4-bit, multiply by 4 to get bytes
-             struct udphdr *udp = (void *)ip + (ip->ihl * 4);
-             
-             // Ensure UDP header is within bounds
-             if ((void *)(udp + 1) <= data_end) {
-                 // Payload follows UDP header
-                 unsigned char *payload = (void *)(udp + 1);
-                 
-                 // Check if at least 4 bytes of payload exist
-                 if ((void *)(payload + 4) <= data_end) {
-                     // Check for Steam Query Header: 0xFF 0xFF 0xFF 0xFF
-                     // This covers A2S_INFO, A2S_PLAYER, A2S_RULES, etc.
-                     if (*(__u32*)payload == 0xFFFFFFFF) {
-                         // Valid Steam Query - Allow
-                         // Increment allowed stats
-                         key = STAT_ALLOWED;
-                         __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
-                         if (allowed_count)
-                             __sync_fetch_and_add(allowed_count, 1);
-                             
-                         return XDP_PASS;
-                     }
-                 }
-             }
-        }
-    }
 
-    // --- 5. Check GeoIP ---
+    // 7. GeoIP Check (Most Expensive - Last)
     struct lpm_key geo_key = { .prefixlen = 32, .data = src_ip };
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);
     if (!country) {
-        // IP not in allowed country list
-        // Mark as BLOCKED in stats so Dashboard shows it correctly.
         if (stats) stats->blocked = 1;
-
         key = STAT_BLOCKED;
         __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
-        if (blocked_count)
-            __sync_fetch_and_add(blocked_count, 1);
+        if (blocked_count) __sync_fetch_and_add(blocked_count, 1);
 
-        // Check if hard blocking is enabled
         cfg_key = CONFIG_HARD_BLOCKING;
         __u32 *hard_blocking = bpf_map_lookup_elem(&config, &cfg_key);
-        if (hard_blocking && *hard_blocking == 1) {
-            // Hard blocking mode: Drop at XDP level
-            return XDP_DROP;
-        }
+        if (hard_blocking && *hard_blocking == 1) return XDP_DROP;
         
-        // Soft blocking mode: Pass to iptables for handling
-        return XDP_PASS; 
+        return XDP_PASS; // Soft blocking
     }
 
-    // --- 6. Allowed ---
+
+    // 8. Allowed (GeoIP Passed)
     key = STAT_ALLOWED;
     __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
-    if (allowed_count)
-        __sync_fetch_and_add(allowed_count, 1);
+    if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
 
     return XDP_PASS;
 }

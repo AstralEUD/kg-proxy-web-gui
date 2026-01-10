@@ -22,6 +22,9 @@ type FloodProtection struct {
 	db      *gorm.DB
 	webhook *WebhookService
 	geoip   *GeoIPService
+
+	// Optimization: Buffered channel for attack events to prevent goroutine explosion
+	attackQueue chan models.AttackEvent
 }
 
 type ConnectionTracker struct {
@@ -40,11 +43,15 @@ func NewFloodProtection(level int) *FloodProtection {
 		level:         level,
 		ipConnections: make(map[string]*ConnectionTracker),
 		stopChan:      make(chan struct{}),
+		attackQueue:   make(chan models.AttackEvent, 1000), // Buffer 1000 events
 	}
 
 	// Start cleanup goroutine
 	fp.cleanupTicker = time.NewTicker(1 * time.Minute)
 	go fp.cleanupRoutine()
+
+	// Start attack event worker
+	go fp.processAttackQueue()
 
 	return fp
 }
@@ -206,41 +213,101 @@ func (fp *FloodProtection) UnblockIP(ip string) {
 	}
 }
 
-// recordAttack logs attack event to DB and sends webhook alert
-// This should be called as a goroutine to avoid blocking the main packet processing path
+// recordAttack queues an attack event for processing
+// Non-blocking: If queue is full, event is dropped to protect system stability
 func (fp *FloodProtection) recordAttack(ip string, attackType string, pps int64) {
-	// 1. Resolve Country
-	countryName := "Unknown"
-	countryCode := "XX"
+	// 1. Resolve Country (Fast enough to do here, or move to worker if needed)
+	// Moving to worker is better to avoid holding lock/cpu here,
+	// but CheckIP holds lock, so we already have lock contention.
+	// Actually CheckIP calls this inside a goroutine in the old code.
+	// In new code, we want this to be instant.
+
+	select {
+	case fp.attackQueue <- models.AttackEvent{
+		Timestamp:  time.Now(),
+		SourceIP:   ip,
+		AttackType: attackType,
+		PPS:        pps,
+		Action:     "blocked",
+	}:
+		// Queued successfully
+	default:
+		// Queue full - dropping event to save system
+		system.Warn("FloodProtection queue full, dropping alert for %s", ip)
+	}
+}
+
+// processAttackQueue processes events with batching for DB performance
+func (fp *FloodProtection) processAttackQueue() {
+	// Optimization: Batch DB inserts to reduce IOPS during floods
+	batchSize := 100
+	batch := make([]models.AttackEvent, 0, batchSize)
+
+	// Flush ticker (500ms) - ensures logs appear quickly even if batch isn't full
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		// Bulk Insert into DB
+		if fp.db != nil {
+			// CreateInBatches is more efficient than single inserts
+			if err := fp.db.CreateInBatches(batch, batchSize).Error; err != nil {
+				system.Warn("Failed to batch insert attack events: %v", err)
+			}
+		}
+
+		// Reset batch
+		batch = make([]models.AttackEvent, 0, batchSize) // Allocating new slice is safer/easier than zeroing
+	}
+
+	for {
+		select {
+		case <-fp.stopChan:
+			flush() // Flush remaining items before stop
+			return
+
+		case event := <-fp.attackQueue:
+			// 1. Resolve Country (CPU work done here)
+			if fp.geoip != nil {
+				countryName, countryCode := fp.geoip.GetCountry(event.SourceIP)
+				event.CountryName = countryName
+				event.CountryCode = countryCode
+			}
+
+			// 2. Send Webhook immediately (Async)
+			// We don't batch webhooks because they need to be timely, and usually filtered by rate limits upstream
+			if fp.webhook != nil {
+				// Use goroutine to prevent blocking the processing loop
+				go fp.webhook.SendAttackAlert(event.SourceIP, event.CountryName, event.AttackType, event.PPS, "Blocked via Flood Protection")
+			}
+
+			// 3. Add to DB Batch
+			batch = append(batch, event)
+			if len(batch) >= batchSize {
+				flush()
+			}
+
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+// handleAttackEvent is deprecated but kept if needed for single calls (refactored into processAttackQueue)
+func (fp *FloodProtection) handleAttackEvent(event models.AttackEvent) {
+	// Legacy support or fallback
 	if fp.geoip != nil {
-		countryName, countryCode = fp.geoip.GetCountry(ip)
+		event.CountryName, event.CountryCode = fp.geoip.GetCountry(event.SourceIP)
 	}
-
-	// 2. Log to Database
 	if fp.db != nil {
-		event := models.AttackEvent{
-			Timestamp:   time.Now(),
-			SourceIP:    ip,
-			CountryCode: countryCode,
-			CountryName: countryName,
-			AttackType:  attackType,
-			PPS:         pps,
-			Action:      "blocked",
-		}
-
-		// Use a new goroutine for DB write to be extra safe against locking, though db calls are usually thread-safe
-		if err := fp.db.Create(&event).Error; err != nil {
-			system.Warn("Failed to log attack event: %v", err)
-		}
-	} else {
-		system.Warn("Attack detected but DB not connected: %s (%s)", ip, attackType)
+		fp.db.Create(&event)
 	}
-
-	// 3. Send Webhook Alert
 	if fp.webhook != nil {
-		// Use default alert settings (true/true) or read from config if we had access to settings here
-		// For now, we assume if webhook is set, we want alerts
-		fp.webhook.SendAttackAlert(ip, countryName, attackType, pps, "Blocked via Flood Protection")
+		fp.webhook.SendAttackAlert(event.SourceIP, event.CountryName, event.AttackType, event.PPS, "Blocked")
 	}
 }
 
@@ -293,6 +360,12 @@ func (fp *FloodProtection) cleanup() {
 			tracker.Blocked = false
 			tracker.Violations = 0
 		}
+	}
+
+	// Optimization: Clean old attack logs from DB (Retention: 7 days)
+	if fp.db != nil {
+		cutoff := now.AddDate(0, 0, -7)
+		fp.db.Where("timestamp < ?", cutoff).Delete(&models.AttackEvent{})
 	}
 }
 

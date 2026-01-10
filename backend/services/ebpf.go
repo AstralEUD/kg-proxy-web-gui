@@ -275,7 +275,8 @@ func (e *EBPFService) UpdateGeoIPData() error {
 
 // collectTrafficFromEBPF reads real data from eBPF maps
 func (e *EBPFService) collectTrafficFromEBPF() {
-	ticker := time.NewTicker(2 * time.Second)
+	// Optimization: Reduce polling to 5s to prevent syscall flooding during attacks
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	// Snapshot ticker (1 minute)
