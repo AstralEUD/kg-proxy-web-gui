@@ -258,6 +258,10 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// Detect primary interface
 	eth := system.GetDefaultInterface()
 
+	// Pre-fetch services for both mangle and nat tables
+	var services []models.Service
+	s.DB.Preload("Origin").Preload("Ports").Find(&services)
+
 	// ==========================================
 	// 1. Mangle Table (Advanced Packet Filter)
 	// ==========================================
@@ -369,6 +373,23 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A GEO_GUARD -m set --match-set vpn_proxy src -j DROP\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set tor_exits src -j DROP\n")
 
+	// DYNAMIC PORT ALLOW (Game Ports) - Bypasses generic GeoIP blocking
+	// Match logic in eBPF: If valid game port + passed earlier checks -> ALLOW
+	// We iterate through known services to add explicit RETURN rules for UDP ports
+	for _, svc := range services {
+		for _, port := range svc.Ports {
+			if strings.ToLower(port.Protocol) == "udp" {
+				// Single Port
+				if port.PublicPortEnd <= port.PublicPort {
+					sb.WriteString(fmt.Sprintf("-A GEO_GUARD -p udp --dport %d -j RETURN\n", port.PublicPort))
+				} else {
+					// Port Range
+					sb.WriteString(fmt.Sprintf("-A GEO_GUARD -p udp --dport %d:%d -j RETURN\n", port.PublicPort, port.PublicPortEnd))
+				}
+			}
+		}
+	}
+
 	// 1-5h. UDP Flood Protection (Per-IP Rate Limit) - Only for IPs that haven't matched yet
 	// Note: Whitelisted and Established IPs already returned before this point.
 	if settings.GlobalProtection {
@@ -392,9 +413,6 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":POSTROUTING ACCEPT [0:0]\n")
 
 	// Dynamic Port Forwarding Rules
-	var services []models.Service
-	s.DB.Preload("Origin").Preload("Ports").Find(&services)
-
 	for _, svc := range services {
 		// Only forward if Origin has WireGuard IP
 		if svc.Origin.WgIP == "" {

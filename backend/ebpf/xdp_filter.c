@@ -60,6 +60,14 @@ struct {
     __type(value, __u32); // 1 = allowed
 } white_list SEC(".maps");
 
+// BPF map for allowed destination ports (Dynamic Game Port Whitelist)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024); // Support up to 1024 game ports
+    __type(key, __u16);   // Destination Port
+    __type(value, __u32); // 1 = allowed
+} allowed_ports SEC(".maps");
+
 // ... (stats maps remain same)
 
 // Help to copy IP to key
@@ -393,6 +401,20 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // 7. GeoIP Check (Most Expensive - Last)
+
+    // DYNAMIC PORT WHITELIST CHECK
+    // If destination port is in 'allowed_ports', BYPASS GeoIP check.
+    // NOTE: This packet has ALREADY passed Rate Limiting (Step 4), so it is safe from floods.
+    if (dst_port > 0) {
+        __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
+        if (p_allowed && *p_allowed == 1) {
+             key = STAT_ALLOWED;
+             __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+             if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+             return XDP_PASS;
+        }
+    }
+
     struct lpm_key geo_key;
     set_key_ipv4(&geo_key, src_ip);
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);
