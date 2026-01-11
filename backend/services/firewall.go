@@ -258,6 +258,10 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// Detect primary interface
 	eth := system.GetDefaultInterface()
 
+	// Pre-fetch services for both mangle and nat tables
+	var services []models.Service
+	s.DB.Preload("Origin").Preload("Ports").Find(&services)
+
 	// ==========================================
 	// 1. Mangle Table (Advanced Packet Filter)
 	// ==========================================
@@ -409,9 +413,6 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString(":POSTROUTING ACCEPT [0:0]\n")
 
 	// Dynamic Port Forwarding Rules
-	var services []models.Service
-	s.DB.Preload("Origin").Preload("Ports").Find(&services)
-
 	for _, svc := range services {
 		// Only forward if Origin has WireGuard IP
 		if svc.Origin.WgIP == "" {
