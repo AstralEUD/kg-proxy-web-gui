@@ -175,11 +175,6 @@ func (e *EBPFService) loadEBPFProgram() error {
 		e.UpdateGeoIPData()
 	}
 
-	// Sync Allowed Ports (Dynamic Game Ports)
-	if err := e.SyncAllowedPorts(); err != nil {
-		system.Warn("Failed to sync allowed ports on startup: %v", err)
-	}
-
 	// Sync Whitelist (DB + Critical DNS)
 	if err := e.SyncWhitelist(); err != nil {
 		system.Warn("Failed to sync whitelist on startup: %v", err)
@@ -190,8 +185,11 @@ func (e *EBPFService) loadEBPFProgram() error {
 
 // detectInterface finds the primary network interface
 func (e *EBPFService) detectInterface() (*net.Interface, error) {
-	// Try common interface names
-	names := []string{"eth0", "ens3", "ens5", "enp0s3", "wlan0"}
+	// Try common interface names (Added "enp" prefixes for newer linux dists)
+	// Priority: eth0 > ens3 > enp... > wlan0
+	// We iterate net.Interfaces() to match prefixes if possible, or use hardcoded list.
+	// Hardcoded list first for speed on common VPS.
+	names := []string{"eth0", "ens3", "ens4", "ens5", "enp1s0", "enp0s3", "enp3s0", "wlan0"}
 
 	for _, name := range names {
 		iface, err := net.InterfaceByName(name)
@@ -818,85 +816,6 @@ func (e *EBPFService) ResetTrafficStats() error {
 		}
 	}
 
-	return nil
-}
-
-// SyncAllowedPorts reads services from DB and updates the allowed_ports BPF map
-func (e *EBPFService) SyncAllowedPorts() error {
-	if e.db == nil {
-		return fmt.Errorf("database not connected")
-	}
-	if e.objs == nil {
-		return nil // Not in eBPF mode
-	}
-
-	objs, ok := e.objs.(*xdpObjects)
-	if !ok {
-		return nil
-	}
-
-	// 1. Get all active ports from Services
-	var services []models.Service
-	// We only need the PublicPort
-	if err := e.db.Preload("Ports").Find(&services).Error; err != nil {
-		return fmt.Errorf("failed to fetch services: %w", err)
-	}
-
-	// 2. Clear existing ports (simple way: iterate and delete, but map is small)
-	// Or just overwrite. To handle deletions correctly, we should clear/recreate or delete missing.
-	// Since Hash map doesn't support clear, we'll iterate and delete all first.
-	// This map is max 1024 entries, so it's fast.
-	var key uint16
-	var value uint32
-	var keysToDelete []uint16
-
-	iter := objs.AllowedPorts.Iterate()
-	for iter.Next(&key, &value) {
-		keysToDelete = append(keysToDelete, key)
-	}
-	for _, k := range keysToDelete {
-		objs.AllowedPorts.Delete(k)
-	}
-
-	// 3. Add current ports
-	count := 0
-	for _, svc := range services {
-		for _, port := range svc.Ports {
-			// We only whitelist if it's UDP (Game Traffic) - Optional?
-			// User asked for "2001 port" which is game.
-			// Let's whitelist ALL public ports defined in services to be safe.
-			// Note: TCP ports might be for RCON/Web, maybe we shouldn't bypass GeoIP for them?
-			// BUT, the plan says "Game Server ports". Usually UDP.
-			// Let's stick to UDP or all?
-			// If we allow TCP 8080 bypass, RCON might be exposed to world.
-			// Ideally we check port.Protocol == "UDP".
-			// Let's assume protocol string "UDP" or "udp".
-			if strings.ToLower(port.Protocol) == "udp" {
-				p := uint16(port.PublicPort)
-				val := uint32(1)
-				if err := objs.AllowedPorts.Put(p, val); err != nil {
-					system.Warn("Failed to add allowed port %d: %v", p, err)
-				} else {
-					count++
-				}
-
-				// If range? The models might support range.
-				// Based on firewall.go, "PublicPortEnd" exists.
-				if port.PublicPortEnd > port.PublicPort {
-					for i := port.PublicPort + 1; i <= port.PublicPortEnd; i++ {
-						p := uint16(i)
-						if err := objs.AllowedPorts.Put(p, val); err == nil {
-							count++
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if count > 0 {
-		system.Info("Synced %d allowed game ports to eBPF", count)
-	}
 	return nil
 }
 
