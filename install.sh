@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}== KG-Proxy Installer ==${NC}"
 
 # 1. Check Root
-if [ "$EUID" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
   echo -e "${RED}Error: Please run as root (sudo ./install.sh)${NC}"
   exit 1
 fi
