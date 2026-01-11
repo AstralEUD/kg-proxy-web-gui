@@ -66,7 +66,14 @@ rm -f $INSTALL_DIR/kg-proxy-backend
 echo "Cleaning eBPF maps..."
 rm -rf /sys/fs/bpf/kg-proxy
 rm -rf /sys/fs/bpf/xdp_filter
-ip link set dev eth0 xdp off 2>/dev/null || true
+
+# Aggressively unload XDP from ALL interfaces to prevent "Can't replace active BPF XDP link" error
+echo "Unloading existing XDP programs..."
+for iface in $(ip -o link show | awk -F': ' '{print $2}'); do
+    ip link set dev $iface xdp off 2>/dev/null || true
+    ip link set dev $iface xdpgeneric off 2>/dev/null || true
+    ip link set dev $iface xdpdrv off 2>/dev/null || true
+done
 
 # 4. Install Dependencies
 echo -e "${GREEN}[2/7] Installing system dependencies...${NC}"

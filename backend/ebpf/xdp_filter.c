@@ -422,23 +422,33 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // 7. GeoIP Check (Most Expensive - Last)
+    // ============================================================
     struct lpm_key geo_key;
     set_key_ipv4(&geo_key, src_ip);
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);
+    
+    // IF NO COUNTRY MATCH (IP not in DB, or DB empty):
     if (!country) {
-        // Debug logging (only enabled if needed via compile flag, but kept simple here)
-        // bpf_printk("GeoIP Block: %x", src_ip);
+        // FAIL-SAFE:
+        // Only DROP if "Hard Blocking" is explicitly enabled via config map.
+        // Default (0) is Soft Blocking (Allow).
         
-        if (stats) stats->blocked = 1;
-        key = STAT_BLOCKED;
-        __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
-        if (blocked_count) __sync_fetch_and_add(blocked_count, 1);
-
         cfg_key = CONFIG_HARD_BLOCKING;
         __u32 *hard_blocking = bpf_map_lookup_elem(&config, &cfg_key);
-        if (hard_blocking && *hard_blocking == 1) return XDP_DROP;
         
-        return XDP_PASS; // Soft blocking
+        if (hard_blocking && *hard_blocking == 1) {
+            // Count as Blocked
+            if (stats) stats->blocked = 1;
+            key = STAT_BLOCKED;
+            __u64 *blocked_count = bpf_map_lookup_elem(&global_stats, &key);
+            if (blocked_count) __sync_fetch_and_add(blocked_count, 1);
+            
+            return XDP_DROP;
+        }
+        
+        // Soft Blocking (Default): Allow but don't mark as "Allowed" explicitly in stats,
+        // just pass it through. It will fall through to the final PASS.
+        return XDP_PASS; 
     }
 
 
