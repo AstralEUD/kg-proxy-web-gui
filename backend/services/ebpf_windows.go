@@ -34,6 +34,8 @@ func (e *EBPFService) GetPortStats() []PortStats                              { 
 func (e *EBPFService) ResetTrafficStats() error                               { return nil }
 func (e *EBPFService) UpdateAllowIPs(ips []string) error                      { return nil }
 func (e *EBPFService) SyncWhitelist() error                                   { return nil }
+func (e *EBPFService) SyncAllowedPorts() error                                { return nil }
+func (e *EBPFService) UpdateMaintenanceMode(enabled bool) error               { return nil }
 
 // PortStats dummy struct for method signature
 type PortStats struct {
