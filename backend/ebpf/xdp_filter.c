@@ -413,6 +413,18 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
                      return XDP_PASS;
                  }
              }
+
+             // 6-1. UDP Response Bypass (V1.11.8 - Origin Internet Fix)
+             // Responses from well-known service ports bypass GeoIP.
+             // This allows Origin servers to access DNS, apt, web, etc.
+             __u16 src_port = bpf_ntohs(udp->source);
+             // DNS(53), HTTP(80), HTTPS(443), NTP(123)
+             if (src_port == 53 || src_port == 80 || src_port == 443 || src_port == 123) {
+                 key = STAT_ALLOWED;
+                 __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+                 if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+                 return XDP_PASS;
+             }
         }
     }
 
