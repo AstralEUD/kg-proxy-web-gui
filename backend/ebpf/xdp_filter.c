@@ -354,16 +354,33 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // ============================================================
 
     // 7.1 TCP Outbound Response Bypass
+    // Use DIRECT byte inspection to avoid bitfield endianness issues.
+    // Offset 13 (0-based) contains flags: CWR, ECE, URG, ACK, PSH, RST, SYN, FIN
+    // We want ACK (0x10) or RST (0x04).
     if (protocol == IPPROTO_TCP) {
-        // Re-read data pointers for strict verifier (though parsed above)
+        // Re-read data pointers for strict verifier
         void *data_now = (void *)(long)ctx->data;
         struct ethhdr *eth = data_now;
         struct iphdr *ip = (void *)(eth + 1);
-        struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
-        void *data_end_now = (void *)(long)ctx->data_end;
+        // Calculate TCP header position carefully
+        // ip->ihl is length in 32-bit words. *4 for bytes.
+        // We know ParsePacket validated IP header, so this calculation is safe-ish,
+        // but verify bounds again for verifier.
+        if ((void *)ip + 20 > (void *)(long)ctx->data_end) return XDP_PASS; // Should already be checked
+
+        int ip_len = ip->ihl * 4;
+        if (ip_len < 20) ip_len = 20; // sanity
         
-        if ((void *)(tcp + 1) <= data_end_now) {
-             if (tcp->ack || tcp->rst) {
+        // Pointer to TCP header start
+        __u8 *tcp_start = (void *)ip + ip_len;
+        
+        // We need byte 13 of TCP header.
+        // Bounds check: TCP header is at least 20 bytes.
+        if ((void *)(tcp_start + 14) <= (void *)(long)ctx->data_end) {
+             __u8 flags = *(tcp_start + 13);
+             
+             // Check if ACK (0x10) or RST (0x04) is set
+             if ((flags & 0x14) != 0) {
                  key = STAT_ALLOWED;
                  __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
                  if (cnt) __sync_fetch_and_add(cnt, 1);
@@ -415,6 +432,16 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             if (cnt) __sync_fetch_and_add(cnt, 1);
             return XDP_PASS;
         }
+    }
+
+    // 7.5 ICMP Bypass (Ping)
+    // Protected by Rate Limit above, so safe to allow generic ICMP.
+    // Critical for connectivity checks (Ping 8.8.8.8).
+    if (protocol == IPPROTO_ICMP) {
+        key = STAT_ALLOWED;
+        __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+        if (cnt) __sync_fetch_and_add(cnt, 1);
+        return XDP_PASS;
     }
 
 
