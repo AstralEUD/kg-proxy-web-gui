@@ -635,11 +635,6 @@ func (e *EBPFService) SyncWhitelist() error {
 
 	system.Info("Syncing whitelist with %d total entries", len(ips))
 
-	// Also sync ports whenever whitelist is synced
-	if err := e.SyncAllowedPorts(); err != nil {
-		system.Warn("Failed to sync allowed ports: %v", err)
-	}
-
 	return e.UpdateAllowIPs(ips)
 }
 
