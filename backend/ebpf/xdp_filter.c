@@ -212,6 +212,27 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // (Prevents dropping WireGuard, SSH, Management API, and Pings)
     // ============================================================
     if (dst_port == 51820 || dst_port == 22 || dst_port == 8080) return XDP_PASS;
+    
+    // DYNAMIC PORT WHITELIST CHECK (V1.11.3 - Optimization for Games)
+    // We check this BEFORE Rate Limiting and GeoIP to ensure legit game traffic is never dropped.
+    if (dst_port > 0) {
+        __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
+        if (p_allowed && *p_allowed == 1) return XDP_PASS;
+    }
+
+    // UDP FRAGMENT ALLOW (Critical for Arma Reforger)
+    // Fragments don't have UDP headers/ports. If it's a fragment of a UDP packet, 
+    // let the kernel handle it so it can reassemble and match against IPTables DNAT.
+    struct ethhdr *eth_h = data;
+    struct iphdr *ip_h_check = (void *)(eth_h + 1);
+    if ((void *)(ip_h_check + 1) <= data_end) {
+        __u16 frag_off = bpf_ntohs(ip_h_check->frag_off);
+        if (ip_h_check->protocol == IPPROTO_UDP && (frag_off & 0x3FFF)) {
+             // This is a fragment (either MF bit is set or offset > 0)
+             return XDP_PASS;
+        }
+    }
+
     if (protocol == IPPROTO_ICMP) return XDP_PASS;
 
 
@@ -401,20 +422,6 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
 
     // 7. GeoIP Check (Most Expensive - Last)
-
-    // DYNAMIC PORT WHITELIST CHECK
-    // If destination port is in 'allowed_ports', BYPASS GeoIP check.
-    // NOTE: This packet has ALREADY passed Rate Limiting (Step 4), so it is safe from floods.
-    if (dst_port > 0) {
-        __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
-        if (p_allowed && *p_allowed == 1) {
-             key = STAT_ALLOWED;
-             __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
-             if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
-             return XDP_PASS;
-        }
-    }
-
     struct lpm_key geo_key;
     set_key_ipv4(&geo_key, src_ip);
     __u32 *country = bpf_map_lookup_elem(&geo_allowed, &geo_key);

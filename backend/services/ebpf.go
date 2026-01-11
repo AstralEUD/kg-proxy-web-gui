@@ -194,7 +194,7 @@ func (e *EBPFService) detectInterface() (*net.Interface, error) {
 	// Priority: eth0 > ens3 > enp... > wlan0
 	// We iterate net.Interfaces() to match prefixes if possible, or use hardcoded list.
 	// Hardcoded list first for speed on common VPS.
-	names := []string{"eth0", "ens3", "ens4", "ens5", "enp1s0", "enp0s3", "enp3s0", "wlan0"}
+	names := []string{"enp1s0", "eth0", "ens3", "ens4", "ens5", "enp0s3", "enp3s0", "wlan0"}
 
 	for _, name := range names {
 		iface, err := net.InterfaceByName(name)
