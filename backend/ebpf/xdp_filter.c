@@ -212,13 +212,9 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // (Prevents dropping WireGuard, SSH, Management API, and Pings)
     // ============================================================
     if (dst_port == 51820 || dst_port == 22 || dst_port == 8080) return XDP_PASS;
-    
-    // DYNAMIC PORT WHITELIST CHECK (V1.11.3 - Optimization for Games)
-    // We check this BEFORE Rate Limiting and GeoIP to ensure legit game traffic is never dropped.
-    if (dst_port > 0) {
-        __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
-        if (p_allowed && *p_allowed == 1) return XDP_PASS;
-    }
+
+    // NOTE: Game Port bypass moved to AFTER Rate Limiting (Step 4) to prevent DDoS bypass.
+    // See section before GeoIP check.
 
     // UDP FRAGMENT ALLOW (Critical for Arma Reforger)
     // Fragments don't have UDP headers/ports. If it's a fragment of a UDP packet, 
@@ -421,7 +417,23 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     }
 
 
-    // 7. GeoIP Check (Most Expensive - Last)
+    // ============================================================
+    // 7. DYNAMIC PORT WHITELIST CHECK (V1.11.6 - Security Fix)
+    // Placed AFTER Rate Limiting to prevent DDoS bypass via game ports.
+    // Game traffic that passed Rate Limit can now bypass GeoIP.
+    // ============================================================
+    if (dst_port > 0) {
+        __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
+        if (p_allowed && *p_allowed == 1) {
+            key = STAT_ALLOWED;
+            __u64 *allowed_count = bpf_map_lookup_elem(&global_stats, &key);
+            if (allowed_count) __sync_fetch_and_add(allowed_count, 1);
+            return XDP_PASS;
+        }
+    }
+
+
+    // 8. GeoIP Check (Most Expensive - Last)
     // ============================================================
     struct lpm_key geo_key;
     set_key_ipv4(&geo_key, src_ip);
