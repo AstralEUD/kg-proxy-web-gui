@@ -636,12 +636,12 @@ func (e *EBPFService) SyncWhitelist() error {
 	ips = append(ips, CriticalDNS...)
 
 	system.Info("Syncing whitelist with %d total entries", len(ips))
-	
+
 	// Also sync ports whenever whitelist is synced
 	if err := e.SyncAllowedPorts(); err != nil {
 		system.Warn("Failed to sync allowed ports: %v", err)
 	}
-	
+
 	return e.UpdateAllowIPs(ips)
 }
 
@@ -897,19 +897,6 @@ func (e *EBPFService) SyncAllowedPorts() error {
 	if count > 0 {
 		system.Info("Synced %d allowed game ports to eBPF", count)
 	}
-	return nil
-}
-					// Ignore non-exist errors
-					continue
-				}
-				count++
-			}
-			system.Info("Reset traffic stats: cleared %d entries from eBPF map", count)
-		}
-	} else {
-		system.Info("Reset traffic stats: memory only (eBPF not active)")
-	}
-
 	return nil
 }
 
