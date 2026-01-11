@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -53,6 +54,12 @@ func main() {
 	} else {
 		system.Info("SQLite WAL mode enabled")
 	}
+
+	// Optimization: Tuning GC for high throughput (v1.8.0 Restoration)
+	// Set GC percentage to 500% to reduce GC frequency at cost of higher RAM usage.
+	// This is critical for preventing latency spikes during traffic floods.
+	debug.SetGCPercent(500)
+	system.Info("GC Optimization enabled (GOGC=500)")
 
 	// Migrate
 	// Migrate
