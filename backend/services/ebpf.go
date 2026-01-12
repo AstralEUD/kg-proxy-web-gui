@@ -91,11 +91,14 @@ func NewEBPFService() *EBPFService {
 	// Better: Use a helper
 	boot = GetBootTime()
 
+	// Initial interface detection
+	ifaceName := system.GetDefaultInterface()
+
 	return &EBPFService{
 		enabled:      false,
 		trafficData:  make([]TrafficEntry, 0),
 		stopChan:     make(chan struct{}),
-		ifaceName:    "eth0",
+		ifaceName:    ifaceName,
 		bootTime:     boot,
 		lastSnapshot: time.Now(),
 		bpfPinPath:   "/sys/fs/bpf/kg_proxy",
@@ -216,9 +219,9 @@ func (e *EBPFService) loadEBPFProgram() error {
 // loadTCProgram loads the TC egress program for connection tracking
 func (e *EBPFService) loadTCProgram() error {
 	// Attach TC to the WAN interface (same as XDP)
-	// Origin outbound: wg0 -> routing -> NAT -> eth0 egress -> Internet
-	// Internet inbound: eth0 ingress (XDP) -> de-NAT -> wg0 -> Origin
-	// So we track on eth0 egress to catch Origin's outbound traffic
+	// Origin outbound: wg0 -> routing -> NAT -> WAN egress -> Internet
+	// Internet inbound: WAN ingress (XDP) -> de-NAT -> wg0 -> Origin
+	// So we track on WAN egress to catch Origin's outbound traffic
 
 	// Use the same interface that XDP is attached to
 	wanIface, err := net.InterfaceByName(e.ifaceName)
@@ -238,7 +241,7 @@ func (e *EBPFService) loadTCProgram() error {
 	}
 	e.tcObjs = tcObjs
 
-	// Attach TC egress program to WAN interface (eth0)
+	// Attach TC egress program to WAN interface (e.g., eth0, enp1s0)
 	// Using link.AttachTCX for modern kernels (5.10+)
 	tcLink, err := link.AttachTCX(link.TCXOptions{
 		Interface: wanIface.Index,
@@ -257,28 +260,26 @@ func (e *EBPFService) loadTCProgram() error {
 
 // detectInterface finds the primary network interface
 func (e *EBPFService) detectInterface() (*net.Interface, error) {
-	// Try common interface names (Added "enp" prefixes for newer linux dists)
-	// Priority: eth0 > ens3 > enp... > wlan0
-	// We iterate net.Interfaces() to match prefixes if possible, or use hardcoded list.
-	// Hardcoded list first for speed on common VPS.
-	names := []string{"enp1s0", "eth0", "ens3", "ens4", "ens5", "enp0s3", "enp3s0", "wlan0"}
-
-	for _, name := range names {
-		iface, err := net.InterfaceByName(name)
-		if err == nil && iface.Flags&net.FlagUp != 0 {
-			return iface, nil
-		}
+	// Try the primary detection method first
+	name := system.GetDefaultInterface()
+	iface, err := net.InterfaceByName(name)
+	if err == nil && iface.Flags&net.FlagUp != 0 {
+		return iface, nil
 	}
 
-	// Fallback: find first non-loopback interface
+	// Double check: find first non-loopback interface that is UP
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
 	}
 
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
-			return &iface, nil
+			name := strings.ToLower(iface.Name)
+			// Skip known virtual/internal interfaces
+			if !strings.HasPrefix(name, "lo") && !strings.HasPrefix(name, "wg") && !strings.HasPrefix(name, "docker") && !strings.HasPrefix(name, "veth") && !strings.HasPrefix(name, "br-") {
+				return &iface, nil
+			}
 		}
 	}
 

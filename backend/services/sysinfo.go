@@ -217,11 +217,13 @@ func (s *SysInfoService) GetActiveConnections() int {
 	return count
 }
 
-// GetNetworkIO returns network RX/TX bytes for primary interface
+// GetNetworkIO returns network RX/TX bytes for the default interface
 func (s *SysInfoService) GetNetworkIO() (rxBytes, txBytes uint64) {
 	if runtime.GOOS != "linux" {
 		return 0, 0
 	}
+
+	primaryIface := system.GetDefaultInterface()
 
 	// Read /proc/net/dev
 	data, err := os.ReadFile("/proc/net/dev")
@@ -231,27 +233,38 @@ func (s *SysInfoService) GetNetworkIO() (rxBytes, txBytes uint64) {
 
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
-		// Skip loopback and header
+		// Look for the primary interface entry
+		if strings.Contains(line, primaryIface+":") {
+			parts := strings.Split(line, ":")
+			if len(parts) < 2 {
+				continue
+			}
+
+			fields := strings.Fields(parts[1])
+			if len(fields) < 9 {
+				continue
+			}
+
+			rx, _ := strconv.ParseUint(fields[0], 10, 64)
+			tx, _ := strconv.ParseUint(fields[8], 10, 64)
+			return rx, tx
+		}
+	}
+
+	// Fallback: Return first non-loopback interface if primary not found in /proc/net/dev
+	for _, line := range lines {
 		if strings.Contains(line, "lo:") || !strings.Contains(line, ":") {
 			continue
 		}
-
-		// Parse interface stats
 		parts := strings.Split(line, ":")
-		if len(parts) < 2 {
-			continue
+		if len(parts) >= 2 {
+			fields := strings.Fields(parts[1])
+			if len(fields) >= 9 {
+				rx, _ := strconv.ParseUint(fields[0], 10, 64)
+				tx, _ := strconv.ParseUint(fields[8], 10, 64)
+				return rx, tx
+			}
 		}
-
-		fields := strings.Fields(parts[1])
-		if len(fields) < 9 {
-			continue
-		}
-
-		rx, _ := strconv.ParseUint(fields[0], 10, 64)
-		tx, _ := strconv.ParseUint(fields[8], 10, 64)
-
-		// Return first non-loopback interface
-		return rx, tx
 	}
 
 	return 0, 0
