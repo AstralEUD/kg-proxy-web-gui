@@ -261,7 +261,9 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS; // 127.0.0.0/8
 
     // 2.2 Maintenance / Essential Ports
-    if (dst_port == 22 || dst_port == 51820 || dst_port == 8080) return XDP_PASS;
+    // WireGuard: Check BOTH src and dst port to allow handshake responses
+    if (dst_port == 22 || dst_port == 8080) return XDP_PASS;
+    if (dst_port == 51820 || src_port == 51820) return XDP_PASS; // WireGuard bidirectional
 
     // 2.3 Fragmented Packets
     if (is_fragment) return XDP_PASS;
