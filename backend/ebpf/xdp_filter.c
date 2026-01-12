@@ -197,6 +197,16 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
 
     // ============================================================
+    // 0. WIREGUARD BYPASS (HIGHEST PRIORITY)
+    // ============================================================
+    // WireGuard MUST work regardless of any other filter
+    if (protocol == IPPROTO_UDP) {
+        if (dst_port == 51820 || src_port == 51820) {
+            return XDP_PASS;
+        }
+    }
+
+    // ============================================================
     // 1. ESSENTIAL BYPASSES (Always Pass)
     // ============================================================
     // Private Networks
@@ -206,9 +216,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if ((ip_h & 0xFFFF0000) == 0xC0A80000) return XDP_PASS; // 192.168.0.0/16
     if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS; // 127.0.0.0/8
 
-    // Management Ports (SSH, WireGuard, Admin Panel)
+    // Management Ports (SSH, Admin Panel)
     if (dst_port == 22 || dst_port == 8080) return XDP_PASS;
-    if (dst_port == 51820 || src_port == 51820) return XDP_PASS; // WireGuard
 
     // ============================================================
     // 2. WHITELIST -> PASS
