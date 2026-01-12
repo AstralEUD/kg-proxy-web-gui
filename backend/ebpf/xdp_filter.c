@@ -67,6 +67,21 @@ struct {
     __type(value, __u32); // 1 = allowed
 } allowed_ports SEC(".maps");
 
+// Active connections map - shared with TC egress via pinning
+// Tracks outbound connections for response bypass
+// Key: destination IP (external server that Origin connected to)
+// Value: last_seen timestamp (nanoseconds, monotonic)
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 50000);
+    __type(key, __u32);    // dest_ip (network byte order)
+    __type(value, __u64);  // last_seen (ns)
+    __uint(pinning, LIBBPF_PIN_BY_NAME);  // Pin to /sys/fs/bpf/
+} active_connections SEC(".maps");
+
+// Connection tracking TTL in nanoseconds (60 seconds)
+#define CONN_TRACK_TTL_NS (60ULL * 1000000000ULL)
+
 // Help to copy IP to key
 static __always_inline void set_key_ipv4(struct lpm_key *key, __u32 ip) {
     key->prefixlen = 32;
@@ -127,6 +142,7 @@ struct {
 #define STAT_BLOCKED       2
 #define STAT_ALLOWED       3
 #define STAT_RATE_LIMITED  4
+#define STAT_CONN_BYPASS   5  // Connections bypassed via TC tracking
 
 // ============================================================
 // Safe Byte-Oriented Packet Parser (Avoids Bitfield Endianness Issues)
@@ -250,6 +266,33 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // 2.3 Fragmented Packets
     if (is_fragment) return XDP_PASS;
     
+    // ============================================================
+    // 2.5 CONNECTION TRACKING BYPASS (Origin Response)
+    // ============================================================
+    // Check if this source IP is a server that Origin recently connected to.
+    // This allows response traffic from external services (Steam, game servers, etc.)
+    // while maintaining DDoS protection (rate limits still apply later).
+    __u64 *conn_last_seen = bpf_map_lookup_elem(&active_connections, &src_ip);
+    if (conn_last_seen) {
+        __u64 now = bpf_ktime_get_ns();
+        // Check if connection is still valid (within TTL)
+        if ((now - *conn_last_seen) < CONN_TRACK_TTL_NS) {
+            // Update stats
+            key = STAT_CONN_BYPASS;
+            __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+            if (cnt) __sync_fetch_and_add(cnt, 1);
+            
+            key = STAT_ALLOWED;
+            cnt = bpf_map_lookup_elem(&global_stats, &key);
+            if (cnt) __sync_fetch_and_add(cnt, 1);
+            
+            key = STAT_TOTAL_PACKETS;
+            cnt = bpf_map_lookup_elem(&global_stats, &key);
+            if (cnt) __sync_fetch_and_add(cnt, 1);
+            
+            return XDP_PASS;
+        }
+    }
     
     // ============================================================
     // 3. WHITELIST CHECK (Priority 1)
@@ -287,6 +330,54 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
+    // ============================================================
+    // 4.5 TCP RESPONSE BYPASS (Before Rate Limit)
+    // ============================================================
+    // CRITICAL: Check TCP ACK/RST BEFORE rate limit to prevent
+    // blocking legitimate TCP responses from external servers.
+    if (protocol == IPPROTO_TCP) {
+        struct iphdr *ip = (void *)(long)ctx->data + sizeof(struct ethhdr);
+        if ((void *)(ip + 1) > (void *)(long)ctx->data_end) return XDP_PASS; 
+        
+        __u8 ver_ihl = *((__u8 *)ip);
+        __u8 ihl = ver_ihl & 0x0F;
+        int ip_len = ihl * 4;
+        
+        __u8 *tcp_start = (void *)ip + ip_len;
+        
+        // Bounds check: TCP header byte 13
+        if ((void *)(tcp_start + 14) <= (void *)(long)ctx->data_end) {
+             __u8 flags = *(tcp_start + 13);
+             if ((flags & 0x14) != 0) { // ACK (0x10) or RST (0x04)
+                 key = STAT_ALLOWED;
+                 __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+                 if (cnt) __sync_fetch_and_add(cnt, 1);
+                 
+                 key = STAT_TOTAL_PACKETS;
+                 cnt = bpf_map_lookup_elem(&global_stats, &key);
+                 if (cnt) __sync_fetch_and_add(cnt, 1);
+                 return XDP_PASS;
+             }
+        }
+    }
+
+    // ============================================================
+    // 4.6 UDP RESPONSE BYPASS (Before Rate Limit)
+    // ============================================================
+    // Allow UDP responses from common services (DNS, NTP, HTTPS/QUIC)
+    // BEFORE rate limiting to prevent blocking legitimate responses.
+    if (protocol == IPPROTO_UDP) {
+        if (src_port == 53 || src_port == 80 || src_port == 443 || src_port == 123) {
+             key = STAT_ALLOWED;
+             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+             if (cnt) __sync_fetch_and_add(cnt, 1);
+             
+             key = STAT_TOTAL_PACKETS;
+             cnt = bpf_map_lookup_elem(&global_stats, &key);
+             if (cnt) __sync_fetch_and_add(cnt, 1);
+             return XDP_PASS;
+        }
+    }
 
     // ============================================================
     // 5. RATE LIMIT CHECK (Priority 3)
@@ -363,37 +454,9 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // ============================================================
     // 7. SAFE BYPASSES (Passed Rate Limit)
     // ============================================================
+    // NOTE: TCP/UDP response bypasses moved to section 4.5/4.6 (before rate limit)
 
-    // 7.1 TCP Outbound Response Bypass (Manual Byte Check)
-    // Offset 13 (0-based) contains flags: CWR, ECE, URG, ACK, PSH, RST, SYN, FIN
-    // We want ACK (0x10) or RST (0x04).
-    if (protocol == IPPROTO_TCP) {
-        // We need to re-calc offset using manual IHL extraction again?
-        // No, we can rely on our manual IHL from parse_ip_packet which was valid.
-        // We need to access data again.
-        struct iphdr *ip = (void *)(long)ctx->data + sizeof(struct ethhdr);
-        // Validated in parse_ip_packet, but verifier forgets.
-        if ((void *)(ip + 1) > (void *)(long)ctx->data_end) return XDP_PASS; 
-        
-        __u8 ver_ihl = *((__u8 *)ip);
-        __u8 ihl = ver_ihl & 0x0F;
-        int ip_len = ihl * 4;
-        
-        __u8 *tcp_start = (void *)ip + ip_len;
-        
-        // Bounds check: TCP header byte 13
-        if ((void *)(tcp_start + 14) <= (void *)(long)ctx->data_end) {
-             __u8 flags = *(tcp_start + 13);
-             if ((flags & 0x14) != 0) { // ACK or RST
-                 key = STAT_ALLOWED;
-                 __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-                 if (cnt) __sync_fetch_and_add(cnt, 1);
-                 return XDP_PASS;
-             }
-        }
-    }
-
-    // 7.2 Steam Query Bypass (A2S_INFO)
+    // 7.1 Steam Query Bypass (A2S_INFO)
     if (protocol == IPPROTO_UDP) {
          // Re-calc offset
         struct iphdr *ip = (void *)(long)ctx->data + sizeof(struct ethhdr);
@@ -415,19 +478,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
              }
         }
     }
-    
-    // 7.3 UDP Response Bypass (Origin Internet Fix)
-    // ALLOW RESPONSE TRAFFIC from common services (DNS, HTTP, NTP)
-    if (protocol == IPPROTO_UDP) {
-        if (src_port == 53 || src_port == 80 || src_port == 443 || src_port == 123) {
-             key = STAT_ALLOWED;
-             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-             if (cnt) __sync_fetch_and_add(cnt, 1);
-             return XDP_PASS;
-        }
-    }
 
-    // 7.4 Dynamic Game Port Bypass
+    // 7.2 Dynamic Game Port Bypass
     if (dst_port > 0) {
         __u32 *p_allowed = bpf_map_lookup_elem(&allowed_ports, &dst_port);
         if (p_allowed && *p_allowed == 1) {
@@ -438,7 +490,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         }
     }
 
-    // 7.5 ICMP Bypass (Ping)
+    // 7.3 ICMP Bypass (Ping)
     if (protocol == IPPROTO_ICMP) {
         key = STAT_ALLOWED;
         __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
