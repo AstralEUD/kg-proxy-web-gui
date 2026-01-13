@@ -5,12 +5,13 @@ import (
 )
 
 type Origin struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"unique;not null" json:"name"`
-	WgIP      string    `gorm:"not null" json:"wg_ip"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Services  []Service `gorm:"foreignKey:OriginID" json:"services,omitempty"`
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	Name      string         `gorm:"unique;not null" json:"name"`
+	WgIP      string         `gorm:"not null" json:"wg_ip"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	Services  []Service      `gorm:"foreignKey:OriginID" json:"services,omitempty"`
+	Peer      *WireGuardPeer `gorm:"foreignKey:OriginID" json:"peer,omitempty"`
 }
 
 type Service struct {

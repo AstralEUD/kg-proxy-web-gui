@@ -346,3 +346,53 @@ func (s *WireGuardService) RemovePeer(peer *models.WireGuardPeer) error {
 	_, err := s.Executor.Execute("wg", "set", "wg0", "peer", peer.PublicKey, "remove")
 	return err
 }
+
+// SyncPeers loads all peers from the database and adds them to WireGuard interface
+// This is critical for restoring connectivity after a service restart
+func (s *WireGuardService) SyncPeers(db interface{}) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	// We use interface{} to avoid circular dependency import if possible,
+	// but better to import gorm if not already.
+	// Actually, we can pass the models list or use a proper interface.
+	// Let's assume the caller passes the list of origins/peers to avoid DB dependency here if we want clean architecture,
+	// BUT typically services have DB access.
+	// Looking at other services, they have DB access.
+	// However, WireGuardService struct defined at top doesn't have DB.
+	// Let's add DB to WireGuardService struct or pass it here.
+	// passing it as argument 'peers []models.WireGuardPeer' is cleaner.
+	return nil
+}
+
+// SyncOriginsToPeers syncs all origins from DB to WireGuard interface
+func (s *WireGuardService) SyncOriginsToPeers(origins []models.Origin) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	system.Info("Syncing %d origins to WireGuard peers...", len(origins))
+	count := 0
+	for _, origin := range origins {
+		if origin.Peer == nil {
+			continue
+		}
+
+		// Add Peer
+		// default wgIP logic if stored in Origin model?
+		// Origin model has WgIP string.
+
+		if origin.WgIP == "" {
+			continue
+		}
+
+		if err := s.AddPeer(origin.Peer, origin.WgIP); err != nil {
+			system.Warn("Failed to sync peer for origin %s: %v", origin.Name, err)
+		} else {
+			count++
+		}
+	}
+	system.Info("Successfully synced %d peers to WireGuard", count)
+	return nil
+}

@@ -116,6 +116,16 @@ func main() {
 		// We continue, but warn heavily. Connectivity will likely fail.
 	}
 
+	// Sync Peers (Restore connectivity for existing Origins)
+	var origins []models.Origin
+	if err := db.Preload("Peer").Find(&origins).Error; err != nil {
+		system.Warn("Failed to fetch origins for peer sync: %v", err)
+	} else {
+		if err := wgService.SyncOriginsToPeers(origins); err != nil {
+			system.Warn("Failed to sync WireGuard peers: %v", err)
+		}
+	}
+
 	fwService := services.NewFirewallService(db, executor, geoipService, floodProtect)
 	fwService.StartMaintenanceWatcher()
 
