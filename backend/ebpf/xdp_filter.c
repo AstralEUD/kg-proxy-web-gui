@@ -197,7 +197,20 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     __u64 pkt_size = (void *)(long)ctx->data_end - (void *)(long)ctx->data;
 
     // ============================================================
-    // 0. WIREGUARD BYPASS (HIGHEST PRIORITY)
+    // 0. FRAGMENTATION BYPASS (CRITICAL)
+    // ============================================================
+    // Pass all fragmented packets to kernel for reassembly.
+    // XDP cannot inspect L4 ports on fragments (no headers).
+    // Failing to pass these causes packet loss for WireGuard/Game traffic.
+    struct iphdr *ip = (void *)(long)ctx->data + sizeof(struct ethhdr);
+    if ((void *)(ip + 1) <= (void *)(long)ctx->data_end) {
+        if ((ip->frag_off & bpf_htons(0x3FFF)) != 0) {
+            return XDP_PASS;
+        }
+    }
+
+    // ============================================================
+    // 1. WIREGUARD BYPASS (HIGHEST PRIORITY)
     // ============================================================
     // WireGuard MUST work regardless of any other filter
     if (protocol == IPPROTO_UDP) {
