@@ -269,8 +269,14 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             void *udp_hdr = (void *)ip + (ihl * 4);
             if (udp_hdr + 8 <= (void *)(long)ctx->data_end) {
                 unsigned char *payload = udp_hdr + 8;
-                if ((void *)(payload + 4) <= (void *)(long)ctx->data_end) {
-                    if (*(__u32*)payload == 0xFFFFFFFF) { // Steam A2S signature
+                // Check 4 bytes signature + 1 byte type
+                if ((void *)(payload + 5) <= (void *)(long)ctx->data_end) {
+                    // Use byte comparison to avoid alignment issues
+                    if (payload[0] == 0xFF && payload[1] == 0xFF && 
+                        payload[2] == 0xFF && payload[3] == 0xFF) { 
+                        // Steam A2S signature found (0xFFFFFFFF)
+                        // This covers A2S_INFO, A2S_PLAYER, A2S_RULES, and responses
+                        
                         key = STAT_ALLOWED;
                         __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
                         if (cnt) __sync_fetch_and_add(cnt, 1);
