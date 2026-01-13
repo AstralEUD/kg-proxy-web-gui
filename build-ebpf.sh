@@ -24,7 +24,7 @@ fi
 # Create output directory
 mkdir -p backend/ebpf/build
 
-# Compile eBPF program
+# Compile eBPF XDP program
 clang -O2 -g \
     -target bpf \
     -D__TARGET_ARCH_x86 \
@@ -32,8 +32,16 @@ clang -O2 -g \
     -c backend/ebpf/xdp_filter.c \
     -o backend/ebpf/build/xdp_filter.o
 
-echo "✓ eBPF program compiled successfully"
-echo "Output: backend/ebpf/build/xdp_filter.o"
+# Compile eBPF TC program
+clang -O2 -g \
+    -target bpf \
+    -D__TARGET_ARCH_x86 \
+    -I/usr/include/x86_64-linux-gnu \
+    -c backend/ebpf/tc_egress.c \
+    -o backend/ebpf/build/tc_egress.o
+
+echo "✓ eBPF programs compiled successfully"
+echo "Output: backend/ebpf/build/xdp_filter.o, backend/ebpf/build/tc_egress.o"
 
 # Verify the object file
 if command -v llvm-objdump &> /dev/null; then

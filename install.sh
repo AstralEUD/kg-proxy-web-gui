@@ -109,7 +109,15 @@ cp kg-proxy-backend $INSTALL_DIR/
 cp -r frontend/* $INSTALL_DIR/frontend/
 
 # Copy eBPF objects if they exist
-if [ -d "backend/ebpf" ]; then
+if [ -f "backend/ebpf/build/xdp_filter.o" ]; then
+    cp backend/ebpf/build/xdp_filter.o $INSTALL_DIR/ebpf/
+    # Also copy tc_egress.o if exists
+    if [ -f "backend/ebpf/build/tc_egress.o" ]; then
+        cp backend/ebpf/build/tc_egress.o $INSTALL_DIR/ebpf/
+    else
+        echo -e "${YELLOW}Warning: tc_egress.o not found. Outbound connection tracking will be disabled.${NC}"
+    fi
+elif [ -d "backend/ebpf" ]; then # Fallback to copy all if specific build files not found
     cp -r backend/ebpf/* $INSTALL_DIR/ebpf/ 2>/dev/null || true
 fi
 
