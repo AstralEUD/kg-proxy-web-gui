@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -63,6 +64,8 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 		IPIntelligenceAPIKey  string `json:"ip_intelligence_api_key"`
 		// Data Retention
 		AttackHistoryDays int `json:"attack_history_days"`
+		// Maintenance Mode
+		MaintenanceUntil *time.Time `json:"maintenance_until"`
 	}
 
 	if err := c.BodyParser(&input); err != nil {
@@ -91,6 +94,7 @@ func (h *Handler) UpdateSecuritySettings(c *fiber.Ctx) error {
 	settings.EBPFEnabled = input.EBPFEnabled
 	settings.TrafficStatsResetInterval = input.TrafficStatsResetInterval
 	settings.MaxMindLicenseKey = input.MaxMindLicenseKey
+	settings.MaintenanceUntil = input.MaintenanceUntil // Update Maintenance Mode
 	// XDP Settings
 	settings.XDPHardBlocking = input.XDPHardBlocking
 	settings.XDPRateLimitPPS = input.XDPRateLimitPPS
