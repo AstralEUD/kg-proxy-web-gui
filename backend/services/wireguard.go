@@ -41,9 +41,9 @@ func (s *WireGuardService) Init() error {
 		}
 	}
 
-	// Force apply MTU 1280 (Safe value for WireGuard + PPPoE + IPv6 compatibility)
-	// This helps with PPPoE or other encapsulated WAN connections and avoids fragmentation.
-	if _, err := s.Executor.Execute("ip", "link", "set", "dev", "wg0", "mtu", "1280"); err != nil {
+	// Force apply MTU 1360 to ensure stability (even if interface already existed)
+	// This helps with PPPoE or other encapsulated WAN connections.
+	if _, err := s.Executor.Execute("ip", "link", "set", "dev", "wg0", "mtu", "1360"); err != nil {
 		system.Warn("Failed to set MTU on wg0: %v", err)
 	}
 
