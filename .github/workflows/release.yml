@@ -75,5 +75,8 @@ jobs:
           files: |
             release.tar.gz
             install.sh
+          # Reduce storage usage: artifacts expire after 3 days
+          # GitHub's default is 90 days which consumes excessive storage
+          retention-days: 3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

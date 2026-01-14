@@ -469,8 +469,17 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A INPUT -i lo -j ACCEPT\n")
 	sb.WriteString("-A OUTPUT -o lo -j ACCEPT\n")
 
-	// Allow established connections
+	// Allow established connections (INPUT)
 	sb.WriteString("-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
+
+	// CRITICAL: Allow all outbound traffic from server (OUTPUT chain)
+	// This is essential for:
+	// - Discord webhook notifications (HTTPS to discord.com)
+	// - GeoIP database updates (HTTPS to MaxMind/IPinfo APIs)
+	// - DNS queries
+	// -System updates
+	// Without this, the server cannot initiate external connections
+	sb.WriteString("-A OUTPUT -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
 
 	// 1. SSH Brute-force Protection (Max 10 attempts per 60s)
 	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set\n")
