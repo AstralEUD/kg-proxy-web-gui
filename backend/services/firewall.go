@@ -517,11 +517,13 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	sb.WriteString("-A INPUT -p tcp --dport 443 -j ACCEPT\n")
 	sb.WriteString("-A INPUT -p tcp --dport 8080 -j ACCEPT\n")
 
-	// Forwarding rules (Critical for NAT)
+	// Forwarding rules (Critical for NAT and Origin Outbound)
 	// Allow forwarded traffic that passed Mangle checks
-	// Relaxed rules: Allow forwarding between WireGuard and ANY interface
-	sb.WriteString("-A FORWARD -o wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
-	sb.WriteString("-A FORWARD -i wg0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	// Use wg+ wildcard to match all WireGuard interfaces (wg0, wg1, etc.)
+	sb.WriteString("-A FORWARD -o wg+ -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	sb.WriteString("-A FORWARD -i wg+ -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
+	// CRITICAL: Allow Origin servers (10.200.0.0/24) to initiate NEW outbound connections (Steam API, Workshop, etc.)
+	sb.WriteString("-A FORWARD -s 10.200.0.0/24 -j ACCEPT\n")
 
 	sb.WriteString("COMMIT\n")
 
