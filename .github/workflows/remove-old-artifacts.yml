@@ -1,4 +1,4 @@
-name: Remove old artifacts
+name: Remove old artifacts and releases
 
 on:
   schedule:
@@ -13,47 +13,95 @@ jobs:
 
     permissions:
       actions: write
+      contents: write  # Required to delete releases
 
     steps:
-    - name: Delete old artifacts
+    - name: Delete old artifacts and releases
       uses: actions/github-script@v7
       with:
         script: |
           const daysToKeep = 3;
+          const releasesToKeep = 5;  // Always keep at least 5 releases
           const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000);
           
-          console.log(`Deleting artifacts older than ${cutoffDate.toISOString()}`);
+          console.log(`Cutoff date: ${cutoffDate.toISOString()}`);
+          console.log(`Keeping at least ${releasesToKeep} releases`);
           
-          // Get all artifacts with pagination
-          let page = 1;
-          let deletedCount = 0;
+          // ========== 1. Delete old workflow artifacts ==========
+          console.log('\n=== Checking Workflow Artifacts ===');
+          let artifactPage = 1;
+          let deletedArtifacts = 0;
           
           while (true) {
             const { data } = await github.rest.actions.listArtifactsForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               per_page: 100,
-              page: page
+              page: artifactPage
             });
             
+            console.log(`Found ${data.artifacts.length} artifacts on page ${artifactPage}`);
             if (data.artifacts.length === 0) break;
             
             for (const artifact of data.artifacts) {
               const createdAt = new Date(artifact.created_at);
+              console.log(`  - ${artifact.name} (${artifact.id}): created ${artifact.created_at}, expired: ${artifact.expired}`);
               if (createdAt < cutoffDate) {
-                console.log(`Deleting: ${artifact.name} (${artifact.id}) created ${artifact.created_at}`);
+                console.log(`    -> Deleting (older than cutoff)`);
                 await github.rest.actions.deleteArtifact({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   artifact_id: artifact.id
                 });
-                deletedCount++;
+                deletedArtifacts++;
               }
             }
             
-            page++;
+            artifactPage++;
             if (data.artifacts.length < 100) break;
           }
           
-          console.log(`Deleted ${deletedCount} artifacts`);
-          return deletedCount;
+          console.log(`\nDeleted ${deletedArtifacts} workflow artifacts`);
+          
+          // ========== 2. Delete old releases (keep latest N) ==========
+          console.log('\n=== Checking Releases ===');
+          
+          const { data: releases } = await github.rest.repos.listReleases({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+          });
+          
+          console.log(`Found ${releases.length} total releases`);
+          
+          // Sort by created_at descending (newest first)
+          releases.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+          
+          let deletedReleases = 0;
+          for (let i = 0; i < releases.length; i++) {
+            const release = releases[i];
+            const createdAt = new Date(release.created_at);
+            console.log(`  - ${release.tag_name} (${release.id}): created ${release.created_at}`);
+            
+            // Keep the latest N releases regardless of age
+            if (i < releasesToKeep) {
+              console.log(`    -> Keeping (within top ${releasesToKeep})`);
+              continue;
+            }
+            
+            // Delete older releases beyond the keep limit
+            if (createdAt < cutoffDate) {
+              console.log(`    -> Deleting release and assets`);
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id
+              });
+              deletedReleases++;
+            }
+          }
+          
+          console.log(`\nDeleted ${deletedReleases} old releases`);
+          console.log(`\n=== Summary ===`);
+          console.log(`Artifacts deleted: ${deletedArtifacts}`);
+          console.log(`Releases deleted: ${deletedReleases}`);
