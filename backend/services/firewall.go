@@ -299,7 +299,10 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 		sb.WriteString("-A PREROUTING -p udp --dport 51820 -j ACCEPT\n")
 
 		// 0-1. TCP MSS Clamping (Critical for VPN stability)
-		// Clamp MSS to PMTU to prevent fragmentation/drops of large packets inside tunnel
+		// Force MSS to 1360 for WireGuard to prevent fragmentation (1420 MTU - 60 header)
+		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o wg+ -j TCPMSS --set-mss 1360\n")
+		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -i wg+ -j TCPMSS --set-mss 1360\n")
+		// Fallback for other interfaces (PMTU Discovery)
 		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
 
 		// 1-1. Early Drop: Invalid Packets
