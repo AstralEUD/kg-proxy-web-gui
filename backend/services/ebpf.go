@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -65,9 +67,11 @@ type EBPFService struct {
 	lastGeoIPCount int
 
 	// TC egress connection tracking
-	tcObjs     interface{}
-	tcLink     link.Link
-	bpfPinPath string // Path to pinned BPF maps
+	tcObjs           interface{}
+	tcLink           link.Link
+	tcLegacyAttached bool   // True if legacy tc command was used
+	tcLegacyIface    string // Interface name for legacy cleanup
+	bpfPinPath       string // Path to pinned BPF maps
 }
 
 func NewEBPFService() *EBPFService {
@@ -241,20 +245,59 @@ func (e *EBPFService) loadTCProgram() error {
 	}
 	e.tcObjs = tcObjs
 
-	// Attach TC egress program to WAN interface (e.g., eth0, enp1s0)
-	// Using link.AttachTCX for modern kernels (5.10+)
+	// Try modern TCX first (kernel >= 6.6), then fallback to legacy netlink
 	tcLink, err := link.AttachTCX(link.TCXOptions{
 		Interface: wanIface.Index,
 		Program:   tcObjs.TcEgressTrack,
 		Attach:    ebpf.AttachTCXEgress,
 	})
-	if err != nil {
-		tcObjs.Close()
-		return fmt.Errorf("attaching TC program to %s: %w", e.ifaceName, err)
+	if err == nil {
+		e.tcLink = tcLink
+		system.Info("TC egress attached to %s via TCX (kernel >= 6.6)", e.ifaceName)
+		return nil
 	}
-	e.tcLink = tcLink
 
-	system.Info("TC egress attached to %s for connection tracking", e.ifaceName)
+	// Fallback: Use legacy netlink-based TC attachment for older kernels
+	system.Warn("TCX not supported, trying legacy TC attachment: %v", err)
+
+	if err := e.attachTCLegacy(wanIface.Index, tcObjs.TcEgressTrack); err != nil {
+		tcObjs.Close()
+		return fmt.Errorf("legacy TC attachment failed: %w", err)
+	}
+
+	system.Info("TC egress attached to %s via legacy netlink", e.ifaceName)
+	return nil
+}
+
+// attachTCLegacy uses the tc command to attach the BPF program for older kernels
+func (e *EBPFService) attachTCLegacy(ifIndex int, prog *ebpf.Program) error {
+	// Get interface name from index
+	iface, err := net.InterfaceByIndex(ifIndex)
+	if err != nil {
+		return fmt.Errorf("interface lookup failed: %w", err)
+	}
+
+	// Pin the program so tc can load it
+	progPinPath := filepath.Join(e.bpfPinPath, "tc_egress_prog")
+	if err := prog.Pin(progPinPath); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("pinning TC program: %w", err)
+	}
+
+	// Create clsact qdisc if not exists (ignore error if already exists)
+	exec.Command("tc", "qdisc", "del", "dev", iface.Name, "clsact").Run()
+	if out, err := exec.Command("tc", "qdisc", "add", "dev", iface.Name, "clsact").CombinedOutput(); err != nil {
+		return fmt.Errorf("creating clsact qdisc: %s: %w", string(out), err)
+	}
+
+	// Attach BPF program to egress
+	out, err := exec.Command("tc", "filter", "add", "dev", iface.Name, "egress",
+		"bpf", "direct-action", "pinned", progPinPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("attaching TC filter: %s: %w", string(out), err)
+	}
+
+	e.tcLegacyAttached = true
+	e.tcLegacyIface = iface.Name
 	return nil
 }
 
@@ -604,7 +647,15 @@ func (e *EBPFService) Disable() {
 }
 
 func (e *EBPFService) detachEBPF() {
-	// Detach TC egress program first
+	// Detach legacy TC first (if using tc command)
+	if e.tcLegacyAttached && e.tcLegacyIface != "" {
+		exec.Command("tc", "filter", "del", "dev", e.tcLegacyIface, "egress").Run()
+		exec.Command("tc", "qdisc", "del", "dev", e.tcLegacyIface, "clsact").Run()
+		e.tcLegacyAttached = false
+		system.Info("Legacy TC egress program detached from %s", e.tcLegacyIface)
+	}
+
+	// Detach TC egress program (TCX method)
 	if e.tcLink != nil {
 		e.tcLink.Close()
 		e.tcLink = nil
