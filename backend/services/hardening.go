@@ -39,7 +39,7 @@ func (s *FirewallService) ApplyHardening(level int) error {
 
 		// === TCP Tuning ===
 		"net.ipv4.tcp_window_scaling":   "1",
-		"net.ipv4.tcp_sack":             "0", // Disable SACK to prevent SACK panic attacks
+		"net.ipv4.tcp_sack":             "1", // Re-enable SACK for better throughput/recovery on lossy links
 		"net.ipv4.tcp_fin_timeout":      "30",
 		"net.ipv4.tcp_keepalive_time":   "600",
 		"net.ipv4.tcp_keepalive_probes": "3",

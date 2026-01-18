@@ -147,6 +147,10 @@ net.ipv4.conf.all.log_martians = 0
 net.ipv4.conf.default.log_martians = 0
 net.core.bpf_jit_enable = 1
 
+# TCP Optimization (SACK enabled for better loss recovery)
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_sack = 1
+
 # Conntrack Optimization (Critical for preventing lockout under load)
 net.netfilter.nf_conntrack_max = 2000000
 net.netfilter.nf_conntrack_udp_timeout = 10
