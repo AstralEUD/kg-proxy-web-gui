@@ -149,7 +149,9 @@ net.core.bpf_jit_enable = 1
 
 # TCP Optimization (SACK enabled for better loss recovery)
 net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_sack = 1
+net.ipv4.tcp_mtu_probing = 1
 
 # Conntrack Optimization (Critical for preventing lockout under load)
 net.netfilter.nf_conntrack_max = 2000000

@@ -39,9 +39,11 @@ func (s *FirewallService) ApplyHardening(level int) error {
 
 		// === TCP Tuning ===
 		"net.ipv4.tcp_window_scaling":   "1",
+		"net.ipv4.tcp_timestamps":       "1",
 		"net.ipv4.tcp_sack":             "1", // Re-enable SACK for better throughput/recovery on lossy links
 		"net.ipv4.tcp_fin_timeout":      "30",
 		"net.ipv4.tcp_keepalive_time":   "600",
+		"net.ipv4.tcp_mtu_probing":      "1", // Handle ICMP blackholes for MTU discovery
 		"net.ipv4.tcp_keepalive_probes": "3",
 		"net.ipv4.tcp_keepalive_intvl":  "15",
 
