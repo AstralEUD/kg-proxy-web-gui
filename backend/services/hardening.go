@@ -18,7 +18,6 @@ func (s *FirewallService) ApplyHardening(level int) error {
 		"net.ipv4.tcp_max_syn_backlog": "65535", // Aggressive for 10Gbps
 		"net.ipv4.tcp_syn_retries":     "2",
 		"net.ipv4.tcp_synack_retries":  "2",
-		"net.ipv4.tcp_timestamps":      "1",
 		"net.core.somaxconn":           "65535", // Max listener backlog
 
 		// === Read/Write Buffer Tuning (16MB for UDP absorption) ===
