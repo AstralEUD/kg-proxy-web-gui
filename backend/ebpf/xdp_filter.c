@@ -216,8 +216,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if ((ip_h & 0xFFFF0000) == 0xC0A80000) return XDP_PASS; // 192.168.0.0/16
     if ((ip_h & 0xFF000000) == 0x7F000000) return XDP_PASS; // 127.0.0.0/8
 
-    // Management Ports (SSH, Admin Panel)
-    if (dst_port == 22 || dst_port == 8080) return XDP_PASS;
+    // Management Ports (SSH, Admin Panel, Web UI)
+    if (dst_port == 22 || dst_port == 8080 || dst_port == 80 || dst_port == 443) return XDP_PASS;
 
     // ============================================================
     // 2. WHITELIST -> PASS

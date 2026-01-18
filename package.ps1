@@ -3,12 +3,21 @@
 
 Write-Host "🚀 Starting Build Process..." -ForegroundColor Cyan
 
+# 0. Sync eBPF (Optional, requires Linux/WSL/Docker with clang)
+# Write-Host "`n[0/4] Regenerating eBPF Bindings (Optional)..." -ForegroundColor Yellow
+# Write-Host "Note: This requires clang and linux-headers. Skip if already synced." -ForegroundColor Gray
+# Check-Location "backend" {
+#     # go generate ./...
+# }
+
 # 1. Build Backend (Linux Target)
 Write-Host "`n[1/4] Building Backend (Go)..." -ForegroundColor Yellow
 $env:GOOS = "linux"
 $env:GOARCH = "amd64"
 Check-Location "backend" {
-    go build -o ../kg-proxy-backend .
+    # Ensure dependencies are tidy
+    go mod tidy
+    go build -v -o ../kg-proxy-backend .
 }
 if ($LASTEXITCODE -ne 0) { Write-Error "Backend build failed"; exit 1 }
 
@@ -103,28 +112,34 @@ rm -rf /opt/kg-proxy/ebpf
 rm -f /opt/kg-proxy/kg-proxy-backend
 
 # Clean eBPF maps (Important for re-loading)
+# Use underscores as defined in backend/services/ebpf.go
 echo "Cleaning eBPF maps..."
-rm -rf /sys/fs/bpf/kg-proxy
+rm -rf /sys/fs/bpf/kg_proxy
 rm -rf /sys/fs/bpf/xdp_filter
-ip link set dev eth0 xdp off 2>/dev/null || true
+
+# Auto-detect interface
+IFACE=\$(ip route show default | awk '/default/ {print \$5}')
+if [ -n "\$IFACE" ]; then
+    echo "Detaching XDP from \$IFACE..."
+    ip link set dev \$IFACE xdp off 2>/dev/null || true
+fi
 
 # 3. Install Dependencies
 show_progress 40 "Installing dependencies(apt)..."
 apt-get update -qq >/dev/null 2>&1
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard iptables ipset wireguard-tools curl clang llvm libbpf-dev linux-headers-\$(uname -r) make gcc gcc-multilib >/dev/null 2>&1
 
-# 4. Build eBPF
-show_progress 50 "Building eBPF..."
-if [ -f "backend/ebpf/xdp_filter.c" ]; then
+# 4. Build eBPF (Optional, if source is provided)
+show_progress 50 "Configuring eBPF..."
+if [ -d "backend/ebpf" ]; then
     if [ -f "build-ebpf.sh" ]; then
         chmod +x build-ebpf.sh
-        # If build fails, we exit because we removed simulation mode
+        echo "Building eBPF from source..."
+        # If build fails, we exit
         ./build-ebpf.sh || { echo -e "\${RED}eBPF Build Failed! Stopping install.\${NC}"; exit 1; }
-    else
-        echo "build-ebpf.sh not found, skipping build."
     fi
 else
-    echo "Note: eBPF source not found. Assuming pre-compiled objects exist."
+    echo "Note: eBPF source not found. Relying on embedded objects in backend binary."
 fi
 
 # 5. Setup Directories & Copy Files
@@ -156,9 +171,10 @@ cat > /etc/sysctl.d/99-kg-proxy-hardening.conf <<EOF
 # KG-Proxy Base Hardening
 net.ipv4.ip_forward = 1
 net.ipv4.tcp_syncookies = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 net.core.bpf_jit_enable = 1
+net.netfilter.nf_conntrack_max = 2000000
 EOF
 sysctl --system > /dev/null 2>&1 || true
 
@@ -192,8 +208,10 @@ systemctl enable kg-proxy >/dev/null 2>&1
 systemctl stop kg-proxy 2>/dev/null || true
 systemctl start kg-proxy
 
-show_progress 95 "Opening Firewall ports..."
+show_progress 95 "Opening Dashboard ports..."
 iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 51820 -j ACCEPT
 if dpkg -l | grep -q iptables-persistent; then
     netfilter-persistent save >/dev/null 2>&1
@@ -225,17 +243,13 @@ $installScriptContent | Out-File -Encoding utf8 "install.sh"
 # 4. Create Tarball
 Write-Host "`n[4/4] Packaging release.tar.gz..." -ForegroundColor Yellow
 
-# Use tar to pack specific files. backend binary + frontend dist
-# We need to make sure directory structure inside tar is clean.
-# /kg-proxy-backend
-# /frontend/dist/...
-
+# Use tar to pack specific files. backend binary + frontend dist + ebpf source
 if (Test-Path "release.tar.gz") { Remove-Item "release.tar.gz" }
 
-# We will use the system tar (available in Win10+)
 # Check if tar exists
 if (Get-Command "tar" -ErrorAction SilentlyContinue) {
-    tar -czf release.tar.gz kg-proxy-backend frontend/dist
+    # Include backend/ebpf source and build script so the VPS can re-compile if needed
+    tar -czf release.tar.gz kg-proxy-backend frontend/dist backend/ebpf build-ebpf.sh
 }
 else {
     Write-Error "tar command not found. Please install git-bash or enable WSL."

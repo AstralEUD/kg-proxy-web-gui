@@ -339,6 +339,11 @@ func main() {
 
 		sysMonitor.Stop()
 
+		// Disable XDP (detach filter) to ensure fail-open
+		if ebpfService.IsEnabled() {
+			ebpfService.Disable()
+		}
+
 		// Send Shutdown Alert
 		if webhookService.IsEnabled() {
 			webhookService.SendSystemAlert("🛑 Server Stopping", "KG-Proxy backend is shutting down...", services.ColorOrange)

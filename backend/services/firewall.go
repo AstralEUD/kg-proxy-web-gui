@@ -116,6 +116,12 @@ func (s *FirewallService) ApplyRules() error {
 		return err
 	}
 
+	// 3.5 Generate iptables.rules.raw (Connection Tracking Bypass)
+	rawRules, err := s.generateRawTableRules(&settings)
+	if err != nil {
+		return err
+	}
+
 	// 4. Apply via Executor (Linux only)
 	system.Info("Applying firewall rules...")
 
@@ -126,6 +132,10 @@ func (s *FirewallService) ApplyRules() error {
 
 	if err := s.saveRulesToFile("/tmp/iptables.rules.v4", iptablesRules); err != nil {
 		system.Warn("Failed to save iptables rules: %v", err)
+	}
+
+	if err := s.saveRulesToFile("/tmp/iptables.rules.raw", rawRules); err != nil {
+		system.Warn("Failed to save raw rules: %v", err)
 	}
 
 	// Apply ipset
@@ -140,6 +150,13 @@ func (s *FirewallService) ApplyRules() error {
 		system.Warn("Error applying iptables (may not be on Linux): %v", err)
 	} else {
 		system.Info("IPTables rules applied successfully")
+	}
+
+	// Apply iptables (raw table)
+	if _, err := s.Executor.Execute("iptables-restore", "/tmp/iptables.rules.raw"); err != nil {
+		system.Warn("Error applying iptables raw table: %v", err)
+	} else {
+		system.Info("IPTables raw rules (NOTRACK) applied successfully")
 	}
 
 	// Enable SYN cookies if requested (backup check)
@@ -483,7 +500,7 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 	// 1. SSH Brute-force Protection (Max 10 attempts per 60s)
 	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set\n")
-	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 10 -j DROP\n")
+	sb.WriteString("-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 30 -j DROP\n")
 	sb.WriteString("-A INPUT -p tcp --dport 22 -j ACCEPT\n")
 
 	// 2. Global TCP Connection Limit per IP (Max 200)
@@ -519,6 +536,7 @@ func (s *FirewallService) applyMaintenanceMode() error {
 	// Flush Filter and Mangle tables (Blocking happens here)
 	s.Executor.Execute("iptables", "-F")
 	s.Executor.Execute("iptables", "-t", "mangle", "-F")
+	s.Executor.Execute("iptables", "-t", "raw", "-F")
 
 	// DO NOT flush NAT table completely as it contains game port forwarding
 	// Just ensure the base NAT for WireGuard is there (Interface Agnostic)
@@ -531,4 +549,43 @@ func (s *FirewallService) applyMaintenanceMode() error {
 
 	system.Warn("⚠️ Maintenance Mode: Firewall is DISABLED - All traffic allowed (Port Forwarding Preserved)")
 	return nil
+}
+
+func (s *FirewallService) generateRawTableRules(settings *models.SecuritySettings) (string, error) {
+	var sb strings.Builder
+
+	// Pre-fetch services
+	var services []models.Service
+	s.DB.Preload("Ports").Find(&services)
+
+	sb.WriteString("*raw\n")
+	sb.WriteString(":PREROUTING ACCEPT [0:0]\n")
+	sb.WriteString(":OUTPUT ACCEPT [0:0]\n")
+
+	// 1. Unconditionally Bypass Tracking for WireGuard (UDP 51820)
+	// This prevents the tunnel itself from filling the table
+	sb.WriteString("-A PREROUTING -p udp --dport 51820 -j CT --notrack\n")
+	sb.WriteString("-A OUTPUT -p udp --sport 51820 -j CT --notrack\n")
+
+	// 2. Bypass Tracking for Game Ports (UDP)
+	// Game traffic is stateless/high-volume and doesn't need to be in conntrack.
+	// We handle security via XDP validation.
+	for _, svc := range services {
+		for _, port := range svc.Ports {
+			if strings.ToLower(port.Protocol) == "udp" {
+				// Single Port
+				if port.PublicPortEnd <= port.PublicPort {
+					sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j CT --notrack\n", port.PublicPort))
+					sb.WriteString(fmt.Sprintf("-A OUTPUT -p udp --sport %d -j CT --notrack\n", port.PublicPort))
+				} else {
+					// Port Range
+					sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d:%d -j CT --notrack\n", port.PublicPort, port.PublicPortEnd))
+					sb.WriteString(fmt.Sprintf("-A OUTPUT -p udp --sport %d:%d -j CT --notrack\n", port.PublicPort, port.PublicPortEnd))
+				}
+			}
+		}
+	}
+
+	sb.WriteString("COMMIT\n")
+	return sb.String(), nil
 }
