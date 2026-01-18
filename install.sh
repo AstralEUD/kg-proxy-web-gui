@@ -43,6 +43,10 @@ if [ ! -d "frontend" ]; then
     exit 1
 fi
 
+# Define directories early so cleanup can use them
+INSTALL_DIR="/opt/kg-proxy"
+DATA_DIR="/var/lib/kg-proxy"
+
 # 3. Aggressive Cleanup
 echo -e "${GREEN}[1/7] Cleaning up old installation...${NC}"
 
@@ -62,9 +66,10 @@ rm -rf $INSTALL_DIR/frontend
 rm -rf $INSTALL_DIR/ebpf
 rm -f $INSTALL_DIR/kg-proxy-backend
 
-# Clean eBPF maps (Important for re-loading)
+# Clean eBPF maps (Important for re-loading) - BOTH old (hyphen) and new (underscore) paths
 echo "Cleaning eBPF maps..."
 rm -rf /sys/fs/bpf/kg-proxy
+rm -rf /sys/fs/bpf/kg_proxy
 rm -rf /sys/fs/bpf/xdp_filter
 
 # Aggressively unload XDP from ALL interfaces to prevent "Can't replace active BPF XDP link" error
@@ -97,8 +102,7 @@ fi
 
 # 6. Setup Directories & Copy Files
 echo -e "${GREEN}[4/7] Deploying files...${NC}"
-INSTALL_DIR="/opt/kg-proxy"
-DATA_DIR="/var/lib/kg-proxy"
+# INSTALL_DIR and DATA_DIR already defined at script start
 
 mkdir -p $INSTALL_DIR/frontend
 mkdir -p $INSTALL_DIR/ebpf
@@ -137,11 +141,18 @@ cat > /etc/sysctl.d/99-kg-proxy-hardening.conf <<EOF
 # KG-Proxy Base Hardening
 net.ipv4.ip_forward = 1
 net.ipv4.tcp_syncookies = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 net.ipv4.conf.all.log_martians = 0
 net.ipv4.conf.default.log_martians = 0
 net.core.bpf_jit_enable = 1
+
+# Conntrack Optimization (Critical for preventing lockout under load)
+net.netfilter.nf_conntrack_max = 2000000
+net.netfilter.nf_conntrack_udp_timeout = 10
+net.netfilter.nf_conntrack_udp_timeout_stream = 60
+net.netfilter.nf_conntrack_tcp_timeout_established = 600
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 EOF
 sysctl --system > /dev/null 2>&1 || true
 
