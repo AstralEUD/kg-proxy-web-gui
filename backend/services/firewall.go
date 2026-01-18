@@ -177,7 +177,7 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 	var sb strings.Builder
 
 	// Create ipsets
-	sb.WriteString("create geo_allowed hash:net family inet hashsize 65536 maxelem 1000000 -exist\n")
+	sb.WriteString("create geo_allowed hash:net family inet hashsize 131072 maxelem 2000000 -exist\n")
 	sb.WriteString("create vpn_proxy hash:net family inet hashsize 1024 maxelem 100000 -exist\n")
 	sb.WriteString("create tor_exits hash:ip family inet hashsize 1024 maxelem 10000 -exist\n")
 	sb.WriteString("create allow_foreign hash:ip family inet -exist\n")
