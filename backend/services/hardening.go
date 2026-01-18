@@ -45,6 +45,10 @@ func (s *FirewallService) ApplyHardening(level int) error {
 		"net.ipv4.tcp_keepalive_probes": "3",
 		"net.ipv4.tcp_keepalive_intvl":  "15",
 
+		// === UDP Tuning (Aggressive Conntrack Drain) ===
+		"net.netfilter.nf_conntrack_udp_timeout":        "10", // Default 30s -> 10s (Clear unreplied quickly)
+		"net.netfilter.nf_conntrack_udp_timeout_stream": "60", // Default 120s -> 60s (Clear finished sessions)
+
 		// === Security & Anti-Spoofing ===
 		"net.ipv4.conf.all.rp_filter":        "2", // Loose Reverse Path Filtering (Essential for WireGuard/NAT)
 		"net.ipv4.conf.default.rp_filter":    "2",

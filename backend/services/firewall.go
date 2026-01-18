@@ -567,24 +567,9 @@ func (s *FirewallService) generateRawTableRules(settings *models.SecuritySetting
 	sb.WriteString("-A PREROUTING -p udp --dport 51820 -j CT --notrack\n")
 	sb.WriteString("-A OUTPUT -p udp --sport 51820 -j CT --notrack\n")
 
-	// 2. Bypass Tracking for Game Ports (UDP)
-	// Game traffic is stateless/high-volume and doesn't need to be in conntrack.
-	// We handle security via XDP validation.
-	for _, svc := range services {
-		for _, port := range svc.Ports {
-			if strings.ToLower(port.Protocol) == "udp" {
-				// Single Port
-				if port.PublicPortEnd <= port.PublicPort {
-					sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d -j CT --notrack\n", port.PublicPort))
-					sb.WriteString(fmt.Sprintf("-A OUTPUT -p udp --sport %d -j CT --notrack\n", port.PublicPort))
-				} else {
-					// Port Range
-					sb.WriteString(fmt.Sprintf("-A PREROUTING -p udp --dport %d:%d -j CT --notrack\n", port.PublicPort, port.PublicPortEnd))
-					sb.WriteString(fmt.Sprintf("-A OUTPUT -p udp --sport %d:%d -j CT --notrack\n", port.PublicPort, port.PublicPortEnd))
-				}
-			}
-		}
-	}
+	// NOTE: We do NOT apply NOTRACK to Game Ports because they require NAT (Port Forwarding).
+	// NAT relies on Conntrack. If we NOTRACK them, players cannot connect.
+	// Instead, we rely on aggressive UDP timeouts in hardening.go to clear the table quickly.
 
 	sb.WriteString("COMMIT\n")
 	return sb.String(), nil

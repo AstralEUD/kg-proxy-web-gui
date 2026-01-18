@@ -2,23 +2,58 @@ name: Remove old artifacts
 
 on:
   schedule:
-    # Every day at 1am
+    # Every day at 1am UTC
     - cron: '0 1 * * *'
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   remove-old-artifacts:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
-    # For private repos
     permissions:
       actions: write
 
     steps:
-    - name: Remove old artifacts
-      uses: c-hive/gha-remove-artifacts@v1
+    - name: Delete old artifacts
+      uses: actions/github-script@v7
       with:
-        age: '5 days' # '<number> <unit>', e.g. 5 days, 2 years, 90 seconds, parsed by Moment.js
-        # Optional inputs
-        # skip-tags: true
-        # skip-recent: 5
+        script: |
+          const daysToKeep = 3;
+          const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000);
+          
+          console.log(`Deleting artifacts older than ${cutoffDate.toISOString()}`);
+          
+          // Get all artifacts with pagination
+          let page = 1;
+          let deletedCount = 0;
+          
+          while (true) {
+            const { data } = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+              page: page
+            });
+            
+            if (data.artifacts.length === 0) break;
+            
+            for (const artifact of data.artifacts) {
+              const createdAt = new Date(artifact.created_at);
+              if (createdAt < cutoffDate) {
+                console.log(`Deleting: ${artifact.name} (${artifact.id}) created ${artifact.created_at}`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id
+                });
+                deletedCount++;
+              }
+            }
+            
+            page++;
+            if (data.artifacts.length < 100) break;
+          }
+          
+          console.log(`Deleted ${deletedCount} artifacts`);
+          return deletedCount;

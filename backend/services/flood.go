@@ -423,7 +423,7 @@ func (fp *FloodProtection) EnableSYNCookies() error {
 func (fp *FloodProtection) SetConntrackLimits() error {
 	// Increase conntrack table size for high traffic
 	commands := []string{
-		"sysctl -w net.netfilter.nf_conntrack_max=1000000",
+		"sysctl -w net.netfilter.nf_conntrack_max=2000000",
 		"sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=600",
 		"sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=30",
 	}

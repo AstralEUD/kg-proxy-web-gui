@@ -34,60 +34,38 @@
 
 ---
 
-## 🎯 해결 방안
+# Network Lockout Resolution Plan (Phase 3 - Refined)
 
-### 1. 방화벽 규칙 수정
+## Problem Description
+User experiences "delayed lockout" (server works for hours, then dies).
+Analysis confirms **Connection Tracking (Conntrack) Exhaustion**.
+Previous attempt to use `NOTRACK` for Game Ports was **incorrect** because it breaks Port Forwarding (NAT), which is required for the game server.
 
-**파일**: `backend/services/firewall.go`  
-**위치**: Line 474-482 (OUTPUT chain 섹션)
+## Root Cause Analysis
+1.  **Conntrack Limit Conflict**: `hardening.go` sets `2,000,000`, but `flood.go` overrides it to `1,000,000`.
+2.  **UDP Timeouts**: Default UDP unreplied timeout is `30s`. Under flood (random source IPs), the table fills up faster than it drains.
+3.  **NAT Requirement**: Game traffic acts as `Player -> Proxy -> Origin`. This requires DNAT, which *requires* Connection Tracking.
 
-**변경 내용**:
-```go
-// CRITICAL: Allow all outbound traffic from server (OUTPUT chain)
-// This is essential for:
-// - Discord webhook notifications (HTTPS to discord.com)
-// - GeoIP database updates (HTTPS to MaxMind/IPinfo APIs)
-// - DNS queries
-// - System updates
-// Without this, the server cannot initiate external connections
-sb.WriteString("-A OUTPUT -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT\n")
-```
+## Proposed Changes
 
-**적용 시점**: iptables-restore 실행 시 (`ApplyRules()` 호출)
+### 1. Fix NAT Compatibility (`backend/services/firewall.go`)
+-   **Revert**: Remove `NOTRACK` rules for Game Ports.
+-   **Keep**: Retain `NOTRACK` for WireGuard (UDP 51820) as it is local tunnel traffic and helps saving some state.
 
-**검증 방법**:
-```bash
-# 1. 방화벽 규칙 확인
-iptables -L OUTPUT -n -v
+### 2. Resolve Configuration Conflict (`backend/services/flood.go`)
+-   **Action**: Update `SetConntrackLimits` to match the hardening value (`2,000,000`).
 
-# 2. Discord 접속 테스트
-curl -v https://discord.com/api
+### 3. Aggressive Conntrack Tuning (`backend/services/hardening.go`)
+-   **Action**: Reduce UDP timeouts to drain the table faster.
+    -   `net.netfilter.nf_conntrack_udp_timeout`: `30s` -> `10s` (Clears unreplied packets quickly)
+    -   `net.netfilter.nf_conntrack_udp_timeout_stream`: `120s` -> `60s` (Clears finished sessions faster)
 
-# 3. Webhook 테스트 (웹 UI)
-Security Settings → Test Webhook
-
-# 4. 로그 확인
-journalctl -u kg-proxy -f | grep -i "webhook\|network error"
-```
-
----
-
-### 2. GitHub Actions 최적화
-
-**파일**: `.github/workflows/release.yml`  
-**위치**: Line 78-80
-
-**변경 내용**:
-```yaml
-# Reduce storage usage: artifacts expire after 3 days
-# GitHub's default is 90 days which consumes excessive storage
-retention-days: 3
-```
-
-**효과**:
-- 아티팩트 보존기간: 90일 → 3일
-- 저장공간 사용량: ~97% 감소
-- 비용 절감 (GitHub Actions storage quota)
+## Verification Plan
+1.  **Deploy**: Apply changes and restart.
+2.  **Check Limits**: `sysctl net.netfilter.nf_conntrack_max` should be `2000000`.
+3.  **Check Timeouts**: `sysctl net.netfilter.nf_conntrack_udp_timeout` should be `10`.
+4.  **Game Connectivity**: Connect to game server (verifies NAT is working).
+5.  **Monitor**: `conntrack -C` during load.
 
 ---
 
