@@ -279,6 +279,8 @@ func (e *EBPFService) attachTCLegacy(ifIndex int, prog *ebpf.Program) error {
 
 	// Pin the program so tc can load it
 	progPinPath := filepath.Join(e.bpfPinPath, "tc_egress_prog")
+	// Clean up old pin file to prevent version mismatch on restart
+	os.Remove(progPinPath)
 	if err := prog.Pin(progPinPath); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("pinning TC program: %w", err)
 	}

@@ -69,10 +69,19 @@ func (s *FirewallService) ApplyHardening(level int) error {
 	}
 
 	// 3. Apply Rules
+	// Define critical sysctls that must succeed for proper operation
+	criticalSysctls := map[string]bool{
+		"net.ipv4.ip_forward":            true,
+		"net.netfilter.nf_conntrack_max": true,
+	}
+
 	for k, v := range sysctlRules {
-		// Ignore errors as some keys might not exist on all systems (e.g. non-Linux, or container)
 		if _, err := s.Executor.Execute("sysctl", "-w", fmt.Sprintf("%s=%s", k, v)); err != nil {
-			system.Debug("Failed to set sysctl %s: %v", k, err)
+			if criticalSysctls[k] {
+				system.Warn("Failed to set critical sysctl %s: %v", k, err)
+			} else {
+				system.Debug("Failed to set sysctl %s: %v", k, err)
+			}
 		}
 	}
 

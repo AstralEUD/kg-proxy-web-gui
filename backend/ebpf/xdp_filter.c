@@ -90,7 +90,7 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } active_connections SEC(".maps");
 
-#define CONN_TRACK_TTL_NS (60ULL * 1000000000ULL)
+#define CONN_TRACK_TTL_NS (180ULL * 1000000000ULL)
 
 // Rate limiting
 struct rate_limit_entry {
