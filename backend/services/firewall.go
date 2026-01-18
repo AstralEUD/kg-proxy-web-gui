@@ -300,8 +300,8 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 
 		// 0-1. TCP MSS Clamping (Critical for VPN stability)
 		// Force MSS to 1360 for WireGuard to prevent fragmentation (1420 MTU - 60 header)
+		// Note: POSTROUTING can only use -o (output), not -i (input)
 		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o wg+ -j TCPMSS --set-mss 1360\n")
-		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -i wg+ -j TCPMSS --set-mss 1360\n")
 		// Fallback for other interfaces (PMTU Discovery)
 		sb.WriteString("-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
 
