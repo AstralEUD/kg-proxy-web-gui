@@ -77,16 +77,11 @@ func (h *Handler) GetIPInfo(c *fiber.Ctx) error {
 
 	// Check Active eBPF Block
 	if h.EBPF != nil {
-		blockedList, _ := h.EBPF.IterateBlockedIPs() // This is heavy, optimization needed later
-		// Optimization: eBPF map lookup is fast, iteration is slow.
-		// We should implement Lookup method in EBPFService.
-		for _, b := range blockedList {
-			if b.IP == ip {
-				response.Status = "blocked"
-				response.BlockReason = "Active Block: " + b.Reason
-				response.BlockTTL = b.TTL
-				break
-			}
+		// Optimization: Use O(1) map lookup
+		if blockedInfo := h.EBPF.LookupBlockedIP(ip); blockedInfo != nil {
+			response.Status = "blocked"
+			response.BlockReason = "Active Block: " + blockedInfo.Reason
+			response.BlockTTL = blockedInfo.TTL
 		}
 
 		// 3. Traffic Stats from eBPF (Active Session)

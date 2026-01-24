@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"kg-proxy-web-gui/backend/models"
+	"kg-proxy-web-gui/backend/services"
 	"kg-proxy-web-gui/backend/system"
 
 	"github.com/cilium/ebpf"
@@ -46,14 +47,6 @@ type BlockEntry struct {
 	Pad       uint32
 }
 
-// BlockedIPInfo is the API response format
-type BlockedIPInfo struct {
-	IP        string    `json:"ip"`
-	Reason    string    `json:"reason"` // "manual", "rate_limit", "geoip", "flood"
-	ExpiresAt time.Time `json:"expires_at"` // Zero time if permanent
-	TTL       int64     `json:"ttl_seconds"` // Remaining seconds, -1 if permanent
-}
-
 // EBPFService manages eBPF/XDP traffic monitoring
 type EBPFService struct {
 	enabled     bool
@@ -78,9 +71,9 @@ type EBPFService struct {
 	db *gorm.DB
 
 	// For snapshot calculations
-	lastSnapshot       time.Time
-	prevNetworkRX      int64
-	prevNetworkTX      int64
+	lastSnapshot           time.Time
+	prevNetworkRX          int64
+	prevNetworkTX          int64
 	prevTotalPackets       int64
 	prevBlockedPackets     int64
 	prevRateLimitedPackets int64
@@ -545,92 +538,52 @@ func (e *EBPFService) readEBPFMaps() {
 }
 
 // saveTrafficSnapshot saves traffic statistics to the database for historical analysis
-func (e *EBPFService) saveTrafficSnapshot() {
-	if e.db == nil {
-		return
-	}
+// getStatsInternal calculates current traffic statistics
+func (e *EBPFService) getStatsInternal() (DetailedTrafficStats, RawTrafficStats) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	now := time.Now()
-	if now.Sub(e.lastSnapshot) < 1*time.Minute {
-		return
-	}
-
-	// Read statistics from global_stats BPF map (more accurate than ip_stats)
-	var totalPackets, blockedPackets, totalBytes int64
+	var raw RawTrafficStats
+	var totalBytes int64
 	countryCount := make(map[string]int)
 
 	if e.objs != nil {
 		if objs, ok := e.objs.(*xdpObjects); ok {
-// DetailedTrafficStats extends TrafficSnapshot with breakdown
-type DetailedTrafficStats struct {
-	models.TrafficSnapshot
-	RateLimitedPPS int64 `json:"rate_limited_pps"`
-	InvalidPPS     int64 `json:"invalid_pps"`
-	GeoIPBlockPPS  int64 `json:"geoip_block_pps"`
-}
-
-// GetStats returns current traffic statistics with detailed breakdown
-func (e *EBPFService) GetStats() DetailedTrafficStats {
-	e.mutex.RLock()
-	defer e.mutex.RUnlock()
-
-	now := time.Now()
-	
-	// Collect stats from eBPF maps
-	var totalPackets, totalBytes, blockedPackets int64
-	var rateLimitedPackets, invalidPackets, geoipPackets int64
-	countryCount := make(map[string]int)
-
-	if e.objs != nil {
-		objs, ok := e.objs.(*xdpObjects)
-		if ok {
 			var key uint32
 			var value uint64
 
 			// STAT_TOTAL_PACKETS = 0
-			key = 0
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
-				totalPackets = int64(value)
+			if err := objs.GlobalStats.Lookup(uint32(0), &value); err == nil {
+				raw.TotalPackets = int64(value)
 			}
-
 			// STAT_TOTAL_BYTES = 1
-			key = 1
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
+			if err := objs.GlobalStats.Lookup(uint32(1), &value); err == nil {
 				totalBytes = int64(value)
 			}
-
-			// STAT_BLOCKED = 2 (Includes Manual + GeoIP)
-			key = 2
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
-				blockedPackets = int64(value)
+			// STAT_BLOCKED = 2
+			if err := objs.GlobalStats.Lookup(uint32(2), &value); err == nil {
+				raw.BlockedPackets = int64(value)
 			}
-
 			// STAT_RATE_LIMITED = 4
-			key = 4
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
-				rateLimitedPackets = int64(value)
+			if err := objs.GlobalStats.Lookup(uint32(4), &value); err == nil {
+				raw.RateLimitedPackets = int64(value)
 			}
-
 			// STAT_GEOIP_BLOCKED = 6
-			key = 6
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
-				geoipPackets = int64(value)
+			if err := objs.GlobalStats.Lookup(uint32(6), &value); err == nil {
+				raw.GeoIPPackets = int64(value)
 			}
-
 			// STAT_PKT_INVALID = 7
-			key = 7
-			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
-				invalidPackets = int64(value)
+			if err := objs.GlobalStats.Lookup(uint32(7), &value); err == nil {
+				raw.InvalidPackets = int64(value)
 			}
 		}
 	}
 
-	// Get country distribution
 	for _, entry := range e.trafficData {
 		countryCount[entry.CountryCode]++
 	}
 
-	// Calculate PPS
 	elapsed := now.Sub(e.lastSnapshot).Seconds()
 	if elapsed <= 0 {
 		elapsed = 1
@@ -643,58 +596,55 @@ func (e *EBPFService) GetStats() DetailedTrafficStats {
 	deltaInvalid := raw.InvalidPackets - e.prevInvalidPackets
 	deltaGeoIP := raw.GeoIPPackets - e.prevGeoIPPackets
 
-	// Handle resets/overflows
-	if deltaTotal < 0 { deltaTotal = raw.TotalPackets }
-	if deltaBlocked < 0 { deltaBlocked = raw.BlockedPackets }
-	if deltaRateLimited < 0 { deltaRateLimited = raw.RateLimitedPackets }
-	if deltaInvalid < 0 { deltaInvalid = raw.InvalidPackets }
-	if deltaGeoIP < 0 { deltaGeoIP = raw.GeoIPPackets }
+	if deltaTotal < 0 {
+		deltaTotal = raw.TotalPackets
+	}
+	if deltaBlocked < 0 {
+		deltaBlocked = raw.BlockedPackets
+	}
+	if deltaRateLimited < 0 {
+		deltaRateLimited = raw.RateLimitedPackets
+	}
+	if deltaInvalid < 0 {
+		deltaInvalid = raw.InvalidPackets
+	}
+	if deltaGeoIP < 0 {
+		deltaGeoIP = raw.GeoIPPackets
+	}
 
-	// Calculate PPS values
 	totalPPS := int64(float64(deltaTotal) / elapsed)
 	baseBlockedPPS := int64(float64(deltaBlocked) / elapsed)
 	rlPPS := int64(float64(deltaRateLimited) / elapsed)
 	invalidPPS := int64(float64(deltaInvalid) / elapsed)
 	geoipPPS := int64(float64(deltaGeoIP) / elapsed)
-	
-	// Total Blocked = STAT_BLOCKED + STAT_RATE_LIMITED + STAT_PKT_INVALID
-	// Note: GeoIP is already in STAT_BLOCKED
+
 	finalBlockedPPS := baseBlockedPPS + rlPPS + invalidPPS
 
 	allowedPPS := totalPPS - finalBlockedPPS
-	if allowedPPS < 0 { allowedPPS = 0 }
+	if allowedPPS < 0 {
+		allowedPPS = 0
+	}
 
-	// Network I/O
-	sysInfo := NewSysInfoService()
+	sysInfo := services.NewSysInfoService()
 	rxBytes, txBytes := sysInfo.GetNetworkIO()
 	raw.NetworkRX = int64(rxBytes)
 	raw.NetworkTX = int64(txBytes)
 
 	networkRX := int64(float64(rxBytes-uint64(e.prevNetworkRX)) / elapsed)
 	networkTX := int64(float64(txBytes-uint64(e.prevNetworkTX)) / elapsed)
-	if networkRX < 0 { networkRX = 0 }
-	if networkTX < 0 { networkTX = 0 }
+	if networkRX < 0 {
+		networkRX = 0
+	}
+	if networkTX < 0 {
+		networkTX = 0
+	}
 
-	// Top Country
 	topCountry := "XX"
 	maxCount := 0
 	for country, count := range countryCount {
 		if count > maxCount {
 			maxCount = count
 			topCountry = country
-		}
-	}
-	
-	// Re-fetch bytes due to scope
-	// totalBytes was declared inside the if e.objs != nil block, so it needs to be re-fetched or moved.
-	// Moving it to the top of the function is cleaner.
-	// For now, re-fetching it here to match the provided snippet.
-	if e.objs != nil {
-		if objs, ok := e.objs.(*xdpObjects); ok {
-			var val uint64
-			if err := objs.GlobalStats.Lookup(uint32(1), &val); err == nil {
-				totalBytes = int64(val)
-			}
 		}
 	}
 
@@ -832,30 +782,13 @@ func (e *EBPFService) GetTrafficData() []TrafficEntry {
 }
 
 // GetStats returns aggregated statistics
-func (e *EBPFService) GetStats() map[string]interface{} {
+// GetStats returns aggregated statistics
+func (e *EBPFService) GetStats() DetailedTrafficStats {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	totalPackets := 0
-	totalBlocked := 0
-	countryMap := make(map[string]int)
-
-	for _, entry := range e.trafficData {
-		totalPackets += entry.PacketCount
-		if entry.Blocked {
-			totalBlocked++
-		}
-		countryMap[entry.CountryCode]++
-	}
-
-	return map[string]interface{}{
-		"total_packets":   totalPackets,
-		"total_entries":   len(e.trafficData),
-		"blocked_entries": totalBlocked,
-		"countries":       countryMap,
-		"enabled":         e.enabled,
-		"mode":            "eBPF/XDP",
-	}
+	stats, _ := e.getStatsInternal()
+	return stats
 }
 
 // IsEnabled returns whether eBPF is currently enabled
@@ -1050,8 +983,72 @@ func (e *EBPFService) UpdateAllowIPs(ips []string) error {
 	return nil
 }
 
-	system.Info("Updated whitelist in eBPF map: %d entries", len(ips))
-	return nil
+// LookupBlockedIP checks if an IP is blocked and returns the details
+func (e *EBPFService) LookupBlockedIP(ipStr string) *BlockedIPInfo {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.objs == nil {
+		return nil
+	}
+
+	objs, ok := e.objs.(*xdpObjects)
+	if !ok {
+		return nil
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return nil
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return nil
+	}
+
+	// Construct Key
+	key := LpmKey{
+		PrefixLen: 32,
+	}
+	copy(key.Data[:], ip)
+
+	var value BlockEntry
+	if err := objs.BlockedIps.Lookup(key, &value); err != nil {
+		return nil
+	}
+
+	// Found - Parse details
+	reason := "unknown"
+	switch value.Reason {
+	case 1:
+		reason = "manual"
+	case 2:
+		reason = "rate_limit"
+	case 3:
+		reason = "geoip"
+	case 4:
+		reason = "flood"
+	}
+
+	var expiresAt time.Time
+	var ttl int64 = -1
+
+	if value.ExpiresAt > 0 {
+		expiresAt = e.bootTime.Add(time.Duration(value.ExpiresAt) * time.Nanosecond)
+		remaining := time.Until(expiresAt)
+		if remaining > 0 {
+			ttl = int64(remaining.Seconds())
+		} else {
+			ttl = 0
+		}
+	}
+
+	return &BlockedIPInfo{
+		IP:        ipStr,
+		Reason:    reason,
+		ExpiresAt: expiresAt,
+		TTL:       ttl,
+	}
 }
 
 // IterateBlockedIPs returns a list of currently blocked IPs from the eBPF map
@@ -1072,7 +1069,7 @@ func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error) {
 
 	var key LpmKey
 	var value BlockEntry
-	
+
 	// Limit results to prevent traffic flood/DoS on the API itself
 	const MaxResults = 1000
 	count := 0
@@ -1083,7 +1080,7 @@ func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error) {
 	// Or better: we just calculate ExpiresAt wall clock.
 	// ktime_ns is roughly time.Since(bootTime).
 	// So ExpiresAt_Wall = BootTime + ExpiresAt_ns
-	
+
 	iter := objs.BlockedIps.Iterate()
 	for iter.Next(&key, &value) {
 		if count >= MaxResults {
@@ -1116,7 +1113,7 @@ func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error) {
 			// value.ExpiresAt is kernel monotonic time in nanoseconds
 			// We convert it to wall clock time using our recorded bootTime
 			expiresAt = e.bootTime.Add(time.Duration(value.ExpiresAt) * time.Nanosecond)
-			
+
 			// Calculate TTL
 			remaining := time.Until(expiresAt)
 			if remaining > 0 {
@@ -1130,10 +1127,10 @@ func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error) {
 			IP:        ipStr,
 			Reason:    reason,
 			ExpiresAt: expiresAt,
-			TTL:       ttl, 
+			TTL:       ttl,
 		})
 	}
-	
+
 	if err := iter.Err(); err != nil {
 		system.Warn("Error iterating blocked_ips: %v", err)
 	}

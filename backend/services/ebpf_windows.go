@@ -24,7 +24,9 @@ func (e *EBPFService) Enable() error                                          { 
 func (e *EBPFService) Disable()                                               {}
 func (e *EBPFService) IsEnabled() bool                                        { return false }
 func (e *EBPFService) GetTrafficData() []TrafficEntry                         { return nil }
-func (e *EBPFService) GetStats() map[string]interface{}                       { return nil }
+func (e *EBPFService) GetStats() DetailedTrafficStats                         { return DetailedTrafficStats{} }
+func (e *EBPFService) LookupBlockedIP(ip string) *BlockedIPInfo               { return nil }
+func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error)            { return nil, nil }
 func (e *EBPFService) AddBlockedIP(ip string, duration time.Duration) error   { return nil }
 func (e *EBPFService) RemoveBlockedIP(ip string) error                        { return nil }
 func (e *EBPFService) UpdateGeoIPData()                                       {}

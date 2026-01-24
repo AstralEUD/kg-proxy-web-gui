@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/binary"
+	"kg-proxy-web-gui/backend/models"
 	"net"
 	"time"
 )
@@ -32,4 +33,30 @@ func uint32ToIP(n uint32) net.IP {
 	ip := make(net.IP, 4)
 	binary.BigEndian.PutUint32(ip, n)
 	return ip
+}
+
+// DetailedTrafficStats extends TrafficSnapshot with breakdown
+type DetailedTrafficStats struct {
+	models.TrafficSnapshot
+	RateLimitedPPS int64 `json:"rate_limited_pps"`
+	InvalidPPS     int64 `json:"invalid_pps"`
+	GeoIPBlockPPS  int64 `json:"geoip_block_pps"`
+}
+
+type RawTrafficStats struct {
+	TotalPackets       int64
+	BlockedPackets     int64
+	RateLimitedPackets int64
+	InvalidPackets     int64
+	GeoIPPackets       int64
+	NetworkRX          int64
+	NetworkTX          int64
+}
+
+// BlockedIPInfo is the API response format
+type BlockedIPInfo struct {
+	IP        string    `json:"ip"`
+	Reason    string    `json:"reason"`      // "manual", "rate_limit", "geoip", "flood"
+	ExpiresAt time.Time `json:"expires_at"`  // Zero time if permanent
+	TTL       int64     `json:"ttl_seconds"` // Remaining seconds, -1 if permanent
 }

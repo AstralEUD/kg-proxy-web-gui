@@ -106,7 +106,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 			if tracker.Violations >= thresholds.MaxViolations {
 				tracker.Blocked = true
 				tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
-				go fp.recordAttack(ip, "Connection Flood", int64(tracker.PacketsPerSec))
+				fp.recordAttack(ip, "Connection Flood", int64(tracker.PacketsPerSec))
 				return true
 			}
 		}
@@ -119,7 +119,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 		if tracker.Violations >= thresholds.MaxViolations {
 			tracker.Blocked = true
 			tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
-			go fp.recordAttack(ip, "PPS Flood", int64(tracker.PacketsPerSec))
+			fp.recordAttack(ip, "PPS Flood", int64(tracker.PacketsPerSec))
 			return true
 		}
 	}
@@ -131,7 +131,7 @@ func (fp *FloodProtection) CheckIP(ip string, packetCount int, byteCount int64) 
 		if tracker.Violations >= thresholds.MaxViolations {
 			tracker.Blocked = true
 			tracker.BlockedUntil = time.Now().Add(thresholds.BlockDuration)
-			go fp.recordAttack(ip, "Bandwidth Flood", int64(tracker.PacketsPerSec))
+			fp.recordAttack(ip, "Bandwidth Flood", int64(tracker.PacketsPerSec))
 			return true
 		}
 	}

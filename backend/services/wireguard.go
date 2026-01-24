@@ -387,12 +387,43 @@ func (s *WireGuardService) SyncOriginsToPeers(origins []models.Origin) error {
 			continue
 		}
 
+		// Only sync if we have a peer config (need PrivKey/PubKey)
+		// Usually origins are created with keys.
+		// If we don't have keys in DB (e.g. legacy), we might skip or regenerate.
+		// For now, assuming Origin model has keys linked via WireGuardPeer or we just use PubKey from somewhere?
+		// Actually models.Origin has a relation to WireGuardPeer.
+		if origin.Peer.PublicKey == "" {
+			continue // Skip invalid
+		}
+
 		if err := s.AddPeer(origin.Peer, origin.WgIP); err != nil {
-			system.Warn("Failed to sync peer for origin %s: %v", origin.Name, err)
+			system.Warn("Failed to sync peer %s key %s: %v", origin.WgIP, origin.Peer.PublicKey, err)
 		} else {
 			count++
 		}
 	}
 	system.Info("Successfully synced %d peers to WireGuard", count)
 	return nil
+}
+
+// GetStatus returns the current status of the WireGuard interface
+func (s *WireGuardService) GetStatus() (map[string]interface{}, error) {
+	if runtime.GOOS == "windows" {
+		return map[string]interface{}{"status": "active (windows mockup)"}, nil
+	}
+
+	// Check if interface exists
+	iface, err := net.InterfaceByName("wg0")
+	if err != nil {
+		return nil, fmt.Errorf("interface wg0 not found")
+	}
+
+	isUp := iface.Flags&net.FlagUp != 0
+
+	return map[string]interface{}{
+		"interface": "wg0",
+		"up":        isUp,
+		"mtu":       iface.MTU,
+		"mac":       iface.HardwareAddr.String(),
+	}, nil
 }

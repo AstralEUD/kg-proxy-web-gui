@@ -135,7 +135,7 @@ func (h *Handler) RunTraceroute(c *fiber.Ctx) error {
 // CheckWireGuardConnectivity pings the Origin Peer via WG interface
 // GET /api/tools/wg-ping
 func (h *Handler) CheckWireGuardConnectivity(c *fiber.Ctx) error {
-	if h.WireGuard == nil {
+	if h.WG == nil {
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"error": "WireGuard service not initialized"})
 	}
 
@@ -153,13 +153,11 @@ func (h *Handler) CheckWireGuardConnectivity(c *fiber.Ctx) error {
 		LatencyMs int64  `json:"latency_ms"`
 	}
 
-	var statuses []OriginStatus
-
 	// TODO: Fetch origins from DB
 	// We can implement a simplified version pinging the gateway or just one.
 
-	// Using h.WireGuard to check handshake is better (non-intrusive)
-	status, err := h.WireGuard.GetStatus()
+	// Using h.WG to check handshake is better (non-intrusive)
+	status, err := h.WG.GetStatus()
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
