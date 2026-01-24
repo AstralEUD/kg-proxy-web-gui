@@ -57,7 +57,7 @@ static __always_inline void set_key_ipv4(struct lpm_key *key, __u32 ip) {
 // Whitelist (allow)
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __uint(max_entries, 10000);
+    __uint(max_entries, 100000);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, struct lpm_key);
     __type(value, __u32);
@@ -66,7 +66,7 @@ struct {
 // Blacklist (block)
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __uint(max_entries, 10000);
+    __uint(max_entries, 100000);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, struct lpm_key);
     __type(value, __u32);

@@ -531,17 +531,37 @@ func (e *EBPFService) saveTrafficSnapshot() {
 		return
 	}
 
-	// Calculate current totals
-	var totalPackets, blockedPackets int64
-	var totalBytes int64
+	// Read statistics from global_stats BPF map (more accurate than ip_stats)
+	var totalPackets, blockedPackets, totalBytes int64
 	countryCount := make(map[string]int)
 
-	for _, entry := range e.trafficData {
-		totalPackets += int64(entry.PacketCount)
-		totalBytes += entry.ByteCount
-		if entry.Blocked {
-			blockedPackets += int64(entry.PacketCount)
+	if e.objs != nil {
+		if objs, ok := e.objs.(*xdpObjects); ok {
+			var key uint32
+			var value uint64
+
+			// STAT_TOTAL_PACKETS = 0
+			key = 0
+			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
+				totalPackets = int64(value)
+			}
+
+			// STAT_TOTAL_BYTES = 1
+			key = 1
+			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
+				totalBytes = int64(value)
+			}
+
+			// STAT_BLOCKED = 2
+			key = 2
+			if err := objs.GlobalStats.Lookup(key, &value); err == nil {
+				blockedPackets = int64(value)
+			}
 		}
+	}
+
+	// Get country distribution from trafficData (for top country only)
+	for _, entry := range e.trafficData {
 		countryCount[entry.CountryCode]++
 	}
 

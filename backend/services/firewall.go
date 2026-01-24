@@ -180,10 +180,10 @@ func (s *FirewallService) generateIPSetRules(settings *models.SecuritySettings) 
 	sb.WriteString("create geo_allowed hash:net family inet hashsize 131072 maxelem 2000000 -exist\n")
 	sb.WriteString("create vpn_proxy hash:net family inet hashsize 1024 maxelem 100000 -exist\n")
 	sb.WriteString("create tor_exits hash:ip family inet hashsize 1024 maxelem 10000 -exist\n")
-	sb.WriteString("create allow_foreign hash:ip family inet -exist\n")
-	sb.WriteString("create ban hash:ip family inet -exist\n")
+	sb.WriteString("create allow_foreign hash:net family inet maxelem 100000 -exist\n")
+	sb.WriteString("create ban hash:net family inet maxelem 100000 -exist\n")
 	sb.WriteString("create flood_blocked hash:ip family inet timeout 1800 -exist\n")
-	sb.WriteString("create white_list hash:ip family inet -exist\n")
+	sb.WriteString("create white_list hash:net family inet maxelem 100000 -exist\n")
 
 	// Flush existing entries
 	sb.WriteString("flush geo_allowed\n")
