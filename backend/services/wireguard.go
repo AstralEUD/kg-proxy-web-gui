@@ -35,16 +35,9 @@ func (s *WireGuardService) Init() error {
 	// 1. Check if wg0 exists
 	if _, err := s.Executor.Execute("ip", "link", "show", "wg0"); err != nil {
 		system.Info("Creating WireGuard interface wg0...")
-		// Set MTU 1360 to prevent fragmentation on PPPoE/WAN connections
 		if _, err := s.Executor.Execute("ip", "link", "add", "dev", "wg0", "type", "wireguard"); err != nil {
 			return fmt.Errorf("failed to create wg0 interface: %v", err)
 		}
-	}
-
-	// Force apply MTU 1360 to ensure stability (even if interface already existed)
-	// This helps with PPPoE or other encapsulated WAN connections.
-	if _, err := s.Executor.Execute("ip", "link", "set", "dev", "wg0", "mtu", "1360"); err != nil {
-		system.Warn("Failed to set MTU on wg0: %v", err)
 	}
 
 	// 2. Assign IP (10.200.0.1/24) if not present

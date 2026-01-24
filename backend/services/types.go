@@ -41,6 +41,8 @@ type DetailedTrafficStats struct {
 	RateLimitedPPS int64 `json:"rate_limited_pps"`
 	InvalidPPS     int64 `json:"invalid_pps"`
 	GeoIPBlockPPS  int64 `json:"geoip_block_pps"`
+	TotalPackets   int64 `json:"total_packets"`   // Cumulative
+	BlockedPackets int64 `json:"blocked_packets"` // Cumulative
 }
 
 type RawTrafficStats struct {

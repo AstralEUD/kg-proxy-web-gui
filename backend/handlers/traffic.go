@@ -53,6 +53,8 @@ func (h *Handler) GetTrafficData(c *fiber.Ctx) error {
 		"cpu_usage":        stats.CPUUsage,
 		"memory_usage":     stats.MemoryUsage,
 		"timestamp":        stats.Timestamp,
+		"total_packets":    stats.TotalPackets,   // For graph (cumulative)
+		"blocked_packets":  stats.BlockedPackets, // For graph (cumulative)
 	}
 
 	return c.JSON(fiber.Map{

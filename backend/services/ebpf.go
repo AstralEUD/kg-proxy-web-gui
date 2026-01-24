@@ -854,6 +854,8 @@ func (e *EBPFService) getStatsInternal() (DetailedTrafficStats, RawTrafficStats)
 		RateLimitedPPS:  rlPPS,
 		InvalidPPS:      invalidPPS,
 		GeoIPBlockPPS:   geoipPPS,
+		TotalPackets:    raw.TotalPackets,
+		BlockedPackets:  raw.BlockedPackets,
 	}, raw
 }
 
