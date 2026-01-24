@@ -49,5 +49,18 @@ type SecuritySettings struct {
 	// Maintenance Mode (Temporarily disable all blocking)
 	MaintenanceUntil *time.Time `json:"maintenance_until,omitempty"` // If set and not expired, all blocking is disabled
 
+	// === NEW FEATURE FLAGS (v1.15.0) ===
+	// Block Map TTL: Auto-expire rate-limited IPs
+	EnableBlockTTL  bool `gorm:"default:false" json:"enable_block_ttl"`
+	BlockTTLMinutes int  `gorm:"default:5" json:"block_ttl_minutes"` // TTL for auto-blocked IPs (default 5 min)
+
+	// 2-Stage UDP Rate Limit: Separate limits for NEW vs ESTABLISHED connections
+	EnableTwoStageUDP bool `gorm:"default:false" json:"enable_two_stage_udp"`
+	UDPNewPPSLimit    int  `gorm:"default:1000" json:"udp_new_pps_limit"`     // PPS limit for NEW UDP (default 1000)
+	UDPEstablishedPPS int  `gorm:"default:100000" json:"udp_established_pps"` // PPS limit for ESTABLISHED UDP (default 100K)
+
+	// Packet Validation: Drop invalid packets at XDP level
+	EnablePacketValidation bool `gorm:"default:false" json:"enable_packet_validation"`
+
 	UpdatedAt time.Time `json:"updated_at"`
 }

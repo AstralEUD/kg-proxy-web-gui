@@ -71,6 +71,8 @@ echo "Cleaning eBPF maps..."
 rm -rf /sys/fs/bpf/kg-proxy
 rm -rf /sys/fs/bpf/kg_proxy
 rm -rf /sys/fs/bpf/xdp_filter
+# v1.15.0: blocked_ips map structure changed - must clean to avoid load failures
+rm -rf /sys/fs/bpf/tc/globals/blocked_ips
 
 # Aggressively unload XDP from ALL interfaces to prevent "Can't replace active BPF XDP link" error
 echo "Unloading existing XDP programs..."

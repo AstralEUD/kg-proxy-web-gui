@@ -63,13 +63,25 @@ struct {
     __type(value, __u32);
 } white_list SEC(".maps");
 
-// Blacklist (block)
+// Block Entry with TTL (v1.15.0)
+struct block_entry {
+    __u64 expires_at;  // 0 = permanent, >0 = expiration time in nanoseconds
+    __u32 reason;      // 1=manual, 2=rate_limit, 3=geoip, 4=flood
+    __u32 pad;
+};
+
+#define BLOCK_REASON_MANUAL     1
+#define BLOCK_REASON_RATE_LIMIT 2
+#define BLOCK_REASON_GEOIP      3
+#define BLOCK_REASON_FLOOD      4
+
+// Blacklist (block) - Now with TTL support
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 100000);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, struct lpm_key);
-    __type(value, __u32);
+    __type(value, struct block_entry);
 } blocked_ips SEC(".maps");
 
 // GeoIP allowed countries
@@ -120,17 +132,21 @@ struct {
 #define STAT_RATE_LIMITED  4
 #define STAT_CONN_BYPASS   5
 #define STAT_GEOIP_BLOCKED 6
+#define STAT_PKT_INVALID   7  // v1.15.0: Invalid packets dropped
 
 // Configuration
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 4);
+    __uint(max_entries, 8);  // Increased for new features
     __type(key, __u32);
     __type(value, __u32);
 } config SEC(".maps");
 
-#define CONFIG_HARD_BLOCKING  0
-#define CONFIG_RATE_LIMIT_PPS 1
+#define CONFIG_HARD_BLOCKING      0
+#define CONFIG_RATE_LIMIT_PPS     1
+#define CONFIG_ENABLE_BLOCK_TTL   2  // v1.15.0: Enable Block Map TTL
+#define CONFIG_BLOCK_TTL_SECONDS  3  // v1.15.0: TTL in seconds (default 300)
+#define CONFIG_ENABLE_PKT_VALIDATION 4  // v1.15.0: Enable Packet Validation
 
 // Port stats (optional, for monitoring)
 struct port_stats {
@@ -181,6 +197,50 @@ static __always_inline int parse_ip_packet(struct xdp_md *ctx, __u32 *src_ip, __
 }
 
 // ============================================================
+// PACKET VALIDATION (v1.15.0)
+// ============================================================
+// Returns 0 if valid, -1 if invalid
+static __always_inline int validate_packet(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct ethhdr *eth = data;
+    
+    if ((void *)(eth + 1) > data_end) return -1;
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) return 0; // Skip non-IPv4
+    
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end) return -1;
+    
+    // 1. IP Version must be 4
+    __u8 version = (*((__u8 *)ip)) >> 4;
+    if (version != 4) return -1;
+    
+    // 2. IP Header Length must be >= 5 (20 bytes)
+    __u8 ihl = (*((__u8 *)ip)) & 0x0F;
+    if (ihl < 5) return -1;
+    
+    // 3. Total Length must be >= 20
+    __u16 total_len = bpf_ntohs(ip->tot_len);
+    if (total_len < 20) return -1;
+    
+    // 4. TTL must be non-zero (TTL 0 is invalid)
+    // Note: Removed TTL > 128 check to avoid blocking VPN/tunnel traffic
+    if (ip->ttl == 0) return -1;
+    
+    // 5. UDP specific: Length must be >= 8
+    if (ip->protocol == IPPROTO_UDP) {
+        int ip_len = ihl * 4;
+        void *udp_hdr = (void *)ip + ip_len;
+        if (udp_hdr + 8 > data_end) return -1;
+        
+        __u16 udp_len = ((__u16)((__u8 *)udp_hdr)[4] << 8) | ((__u8 *)udp_hdr)[5];
+        if (udp_len < 8) return -1;
+    }
+    
+    return 0;
+}
+
+// ============================================================
 // MAIN XDP FILTER
 // ============================================================
 SEC("xdp")
@@ -203,6 +263,20 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if (protocol == IPPROTO_UDP) {
         if (dst_port == 51820 || src_port == 51820) {
             return XDP_PASS;
+        }
+    }
+
+    // ============================================================
+    // 0.5 PACKET VALIDATION (v1.15.0) - Drop invalid packets early
+    // ============================================================
+    __u32 pv_key = CONFIG_ENABLE_PKT_VALIDATION;
+    __u32 *pkt_validation_enabled = bpf_map_lookup_elem(&config, &pv_key);
+    if (pkt_validation_enabled && *pkt_validation_enabled == 1) {
+        if (validate_packet(ctx) < 0) {
+            key = STAT_PKT_INVALID;
+            __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+            if (cnt) __sync_fetch_and_add(cnt, 1);
+            return XDP_DROP;
         }
     }
 
@@ -232,16 +306,24 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     }
 
     // ============================================================
-    // 3. BLACKLIST -> DROP
+    // 3. BLACKLIST -> DROP (with TTL support v1.15.0)
     // ============================================================
     struct lpm_key b_key;
     set_key_ipv4(&b_key, src_ip);
-    __u32 *blocked = bpf_map_lookup_elem(&blocked_ips, &b_key);
-    if (blocked && *blocked == 1) {
-        key = STAT_BLOCKED;
-        __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-        if (cnt) __sync_fetch_and_add(cnt, 1);
-        return XDP_DROP;
+    struct block_entry *blocked = bpf_map_lookup_elem(&blocked_ips, &b_key);
+    if (blocked) {
+        __u64 now = bpf_ktime_get_ns();
+        // Check if entry has expired (expires_at > 0 means TTL-based)
+        if (blocked->expires_at > 0 && now >= blocked->expires_at) {
+            // Entry has expired - delete it
+            bpf_map_delete_elem(&blocked_ips, &b_key);
+        } else {
+            // Still blocked (permanent or not expired)
+            key = STAT_BLOCKED;
+            __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
+            if (cnt) __sync_fetch_and_add(cnt, 1);
+            return XDP_DROP;
+        }
     }
 
     // ============================================================
@@ -305,6 +387,23 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             if (new_tokens > *rate_limit_pps) new_tokens = *rate_limit_pps;
             
             if (new_tokens < 1) {
+                // === Block Map TTL: Auto-add to blocklist (v1.15.0) ===
+                __u32 ttl_key = CONFIG_ENABLE_BLOCK_TTL;
+                __u32 *ttl_enabled = bpf_map_lookup_elem(&config, &ttl_key);
+                if (ttl_enabled && *ttl_enabled == 1) {
+                    __u32 ttl_sec_key = CONFIG_BLOCK_TTL_SECONDS;
+                    __u32 *ttl_seconds = bpf_map_lookup_elem(&config, &ttl_sec_key);
+                    __u64 ttl = (ttl_seconds && *ttl_seconds > 0) ? *ttl_seconds : 300; // Default 5 min
+                    struct block_entry entry = {
+                        .expires_at = now + (ttl * 1000000000ULL),
+                        .reason = BLOCK_REASON_RATE_LIMIT,
+                        .pad = 0
+                    };
+                    struct lpm_key rl_b_key;
+                    set_key_ipv4(&rl_b_key, src_ip);
+                    bpf_map_update_elem(&blocked_ips, &rl_b_key, &entry, BPF_ANY);
+                }
+                
                 key = STAT_RATE_LIMITED;
                 __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
                 if (cnt) __sync_fetch_and_add(cnt, 1);

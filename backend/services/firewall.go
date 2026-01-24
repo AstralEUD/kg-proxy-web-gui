@@ -413,8 +413,28 @@ func (s *FirewallService) generateIPTablesRules(settings *models.SecuritySetting
 	// 1-5h. UDP Flood Protection (Per-IP Rate Limit) - Only for IPs that haven't matched yet
 	// Note: Whitelisted and Established IPs already returned before this point.
 	if settings.GlobalProtection {
-		sb.WriteString("-A GEO_GUARD -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 90000/sec --hashlimit-burst 180000 -j RETURN\n")
-		sb.WriteString("-A GEO_GUARD -p udp -j DROP\n")
+		// === 2-Stage UDP Rate Limit (v1.15.0) ===
+		if settings.EnableTwoStageUDP {
+			// Stage 1: NEW connections (strict limit) - 공격자는 주로 NEW 상태
+			newLimit := settings.UDPNewPPSLimit
+			if newLimit <= 0 {
+				newLimit = 1000 // 기본값 1000 PPS
+			}
+			sb.WriteString(fmt.Sprintf("-A GEO_GUARD -p udp -m conntrack --ctstate NEW -m hashlimit --hashlimit-name udp_new --hashlimit-mode srcip --hashlimit-upto %d/sec --hashlimit-burst %d -j RETURN\n", newLimit, newLimit*2))
+			sb.WriteString("-A GEO_GUARD -p udp -m conntrack --ctstate NEW -j DROP\n")
+
+			// Stage 2: ESTABLISHED connections (generous limit) - 정상 게임 트래픽
+			estLimit := settings.UDPEstablishedPPS
+			if estLimit <= 0 {
+				estLimit = 100000 // 기본값 100K PPS
+			}
+			sb.WriteString(fmt.Sprintf("-A GEO_GUARD -p udp -m conntrack --ctstate ESTABLISHED,RELATED -m hashlimit --hashlimit-name udp_est --hashlimit-mode srcip --hashlimit-upto %d/sec --hashlimit-burst %d -j RETURN\n", estLimit, estLimit*2))
+			sb.WriteString("-A GEO_GUARD -p udp -m conntrack --ctstate ESTABLISHED,RELATED -j DROP\n")
+		} else {
+			// 기존 단일 규칙 (Feature Flag 비활성화 시)
+			sb.WriteString("-A GEO_GUARD -p udp -m hashlimit --hashlimit-name udp_flood --hashlimit-mode srcip --hashlimit-upto 90000/sec --hashlimit-burst 180000 -j RETURN\n")
+			sb.WriteString("-A GEO_GUARD -p udp -j DROP\n")
+		}
 	}
 	sb.WriteString("-A GEO_GUARD -m set --match-set geo_allowed src -j RETURN\n")
 	sb.WriteString("-A GEO_GUARD -m set --match-set allow_foreign src -j RETURN\n")

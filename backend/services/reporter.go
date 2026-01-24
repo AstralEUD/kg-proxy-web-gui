@@ -99,18 +99,50 @@ func (r *DailyReporter) SendReport() {
 		attackStats.TopCountry = "None"
 	}
 
-	// 3. Construct Message
+	// 3. Top Attack Types
+	type attackTypeCount struct {
+		AttackType string
+		Count      int64
+	}
+	var topAttackTypes []attackTypeCount
+	r.db.Model(&models.AttackEvent{}).
+		Select("attack_type, COUNT(*) as count").
+		Where("timestamp >= ?", yesterday).
+		Group("attack_type").
+		Order("count DESC").
+		Limit(3).
+		Scan(&topAttackTypes)
+
+	// 4. Construct Message
 	title := fmt.Sprintf("📊 Daily Traffic Report (%s)", yesterday.Format("2006-01-02"))
 
+	var attackTypeMsg string
+	if len(topAttackTypes) > 0 {
+		attackTypeMsg = "\n**Top Attack Types**\n"
+		for _, at := range topAttackTypes {
+			attackTypeMsg += fmt.Sprintf("• %s: `%d`\n", at.AttackType, at.Count)
+		}
+	} else {
+		attackTypeMsg = "\n**Top Attack Types**\n• None detected\n"
+	}
+
+	var topCountryMsg string
+	if attackStats.TopCountry != "None" {
+		topCountryMsg = fmt.Sprintf("• Top Attacker: `%s`", attackStats.TopCountry)
+	} else {
+		topCountryMsg = "• Top Attacker: `None`"
+	}
+
 	desc := fmt.Sprintf("**Traffic Summary**\n"+
-		"• Total Traffic: `%s`\n"+
+		"• Total Volume: `%s` (Est.)\n"+
 		"• Peak Traffic: `%d PPS`\n\n"+
 		"**Security Summary**\n"+
-		"• Total Attacks: `%d`\n"+
-		"• Blocked Attacks: `%d`\n"+
-		"• Top Attacker Country: `%s`",
+		"• Total Incidents: `%d`\n"+
+		"• Blocked Actions: `%d`\n"+
+		"%s%s",
 		formatBytes(stats.TotalBytes), stats.MaxPPS,
-		attackStats.Count, attackStats.BlockedCount, attackStats.TopCountry)
+		attackStats.Count, attackStats.BlockedCount,
+		topCountryMsg, attackTypeMsg)
 
 	r.webhook.SendSystemAlert(title, desc, ColorBlue)
 }

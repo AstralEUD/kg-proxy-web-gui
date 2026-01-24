@@ -34,10 +34,31 @@ func (h *Handler) GetTrafficData(c *fiber.Ctx) error {
 		})
 	}
 
+	// GetStats now returns DetailedTrafficStats struct
+	stats := h.EBPF.GetStats()
+
+	// Convert stats to map for JSON response with extra details
+	statsMap := fiber.Map{
+		"total_pps":        stats.TotalPPS,
+		"total_bps":        stats.TotalBPS,
+		"allowed_pps":      stats.AllowedPPS,
+		"blocked_pps":      stats.BlockedPPS,
+		"rate_limited_pps": stats.RateLimitedPPS,
+		"invalid_pps":      stats.InvalidPPS,
+		"geoip_block_pps":  stats.GeoIPBlockPPS,
+		"unique_ips":       stats.UniqueIPs,
+		"top_country":      stats.TopCountry,
+		"network_rx":       stats.NetworkRX,
+		"network_tx":       stats.NetworkTX,
+		"cpu_usage":        stats.CPUUsage,
+		"memory_usage":     stats.MemoryUsage,
+		"timestamp":        stats.Timestamp,
+	}
+
 	return c.JSON(fiber.Map{
 		"data":    trafficList,
 		"enabled": h.EBPF.IsEnabled(),
-		"stats":   h.EBPF.GetStats(),
+		"stats":   statsMap,
 	})
 }
 
@@ -160,5 +181,58 @@ func (h *Handler) GetPortStats(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"ports": stats,
 		"count": len(stats),
+	})
+}
+
+// GetBlockedIPList returns a list of currently blocked IPs
+// GET /api/traffic/blocked
+func (h *Handler) GetBlockedIPList(c *fiber.Ctx) error {
+	if h.EBPF == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "eBPF service not initialized",
+		})
+	}
+
+	blockedList, err := h.EBPF.IterateBlockedIPs()
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": fmt.Sprintf("Failed to retrieve blocked IPs: %v", err),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"data":  blockedList,
+		"count": len(blockedList),
+	})
+}
+
+// UnblockIP removes an IP from the blocklist
+// DELETE /api/traffic/blocked
+func (h *Handler) UnblockIP(c *fiber.Ctx) error {
+	var input struct {
+		IP string `json:"ip"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid input"})
+	}
+
+	if input.IP == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "IP address key required"})
+	}
+
+	if h.EBPF == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "eBPF service not initialized",
+		})
+	}
+
+	if err := h.EBPF.RemoveBlockedIP(input.IP); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": fmt.Sprintf("Failed to unblock IP: %v", err),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": fmt.Sprintf("IP %s has been unblocked", input.IP),
 	})
 }

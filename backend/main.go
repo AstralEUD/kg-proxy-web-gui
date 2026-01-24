@@ -76,11 +76,26 @@ func main() {
 		&models.SecuritySettings{},
 		&models.TrafficSnapshot{},
 		&models.AttackEvent{},
+		&models.AttackEvent{},
+		&models.AttackSignature{},
+		&models.CountryGroup{},
 	); err != nil {
 		system.Error("Database migration failed: %v", err)
 		log.Fatalf("CRITICAL: Database migration failed. Application cannot start: %v", err)
 	}
 	system.Info("Database migration completed successfully")
+
+	// Seed default attack signatures if empty
+	var sigCount int64
+	db.Model(&models.AttackSignature{}).Count(&sigCount)
+	if sigCount == 0 {
+		for _, sig := range models.SeedDefaultSignatures() {
+			if err := db.Create(&sig).Error; err != nil {
+				system.Warn("Failed to seed signature %s: %v", sig.Name, err)
+			}
+		}
+		system.Info("Seeded %d default attack signatures", len(models.SeedDefaultSignatures()))
+	}
 
 	// 2. Setup Services
 	executor := system.NewExecutor()
@@ -272,16 +287,39 @@ func main() {
 	protected.Post("/security/rules/block", h.AddBanIP)
 	protected.Delete("/security/rules/block/:id", h.DeleteBanIP)
 	protected.Get("/security/check/:ip", h.CheckIPStatus)
+	// IP Intelligence
+	protected.Get("/ip/info/:ip", h.GetIPInfo)
+
+	// Country Groups
+	protected.Get("/security/countries/groups", h.GetCountryGroups)
+	protected.Post("/security/countries/groups", h.CreateCountryGroup)
+	protected.Put("/security/countries/groups/:id", h.UpdateCountryGroup)
+	protected.Delete("/security/countries/groups/:id", h.DeleteCountryGroup)
 
 	// Traffic Data (eBPF)
 	protected.Get("/traffic/data", h.GetTrafficData)
 	protected.Post("/traffic/reset", h.ResetTrafficStats)
 	protected.Get("/traffic/history", h.GetTrafficHistory)
 	protected.Get("/traffic/ports", h.GetPortStats)
+	// Blocked IP Management
+	protected.Get("/traffic/blocked", h.GetBlockedIPList)
+	protected.Delete("/traffic/blocked", h.UnblockIP)
+
+	// Diagnostics / Tools
+	protected.Post("/tools/ping", h.RunPing)
+	protected.Post("/tools/traceroute", h.RunTraceroute)
+	protected.Get("/tools/wg-ping", h.CheckWireGuardConnectivity)
 
 	// Attack History
 	protected.Get("/attacks", h.GetAttackHistory)
 	protected.Get("/attacks/stats", h.GetAttackStats)
+
+	// Attack Signatures
+	protected.Get("/signatures", h.GetSignatures)
+	protected.Post("/signatures", h.CreateSignature)
+	protected.Put("/signatures/:id", h.UpdateSignature)
+	protected.Delete("/signatures/:id", h.DeleteSignature)
+	protected.Post("/signatures/reset-stats", h.ResetSignatureStats)
 
 	// Webhook
 	protected.Post("/webhook/test", h.TestWebhook)

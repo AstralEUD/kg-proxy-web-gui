@@ -6,21 +6,23 @@ import {
 } from '@mui/material';
 import {
     Menu as MenuIcon, Dashboard as DashboardIcon, Router as RouterIcon,
-    Hub as HubIcon, Security as SecurityIcon, Logout as LogoutIcon, Settings, Speed, People, Block, History
+    Hub as HubIcon, Security as SecurityIcon, Logout as LogoutIcon, Settings, Speed, People, Block, History, Public as PublicIcon
 } from '@mui/icons-material';
 import logo from '../assets/logo.png';
 
 const drawerWidth = 260;
 
-const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
-    { text: 'Traffic Analysis', icon: <Speed />, path: '/traffic' },
-    { text: 'Origins', icon: <RouterIcon />, path: '/origins' },
-    { text: 'Services', icon: <HubIcon />, path: '/services' },
-    { text: 'Policy / Firewall', icon: <SecurityIcon />, path: '/policy' },
-    { text: 'Access Rules', icon: <Block />, path: '/security/rules' },
-    { text: 'Attack History', icon: <History />, path: '/attacks' },
-    { text: 'User Management', icon: <People />, path: '/users' },
+{ text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
+{ text: 'Traffic Analysis', icon: <Speed />, path: '/traffic' },
+{ text: 'Network Tools', icon: <RouterIcon />, path: '/tools/network' },
+{ text: 'Origins', icon: <HubIcon />, path: '/origins' },
+{ text: 'Services', icon: <HubIcon />, path: '/services' },
+{ text: 'Policy / Firewall', icon: <SecurityIcon />, path: '/policy' },
+{ text: 'Access Rules', icon: <Block />, path: '/security/rules' },
+{ text: 'Active Blocks', icon: <Block />, path: '/security/blocks' },
+{ text: 'Country Groups', icon: <PublicIcon />, path: '/security/groups' },
+{ text: 'Attack History', icon: <History />, path: '/attacks' },
+{ text: 'User Management', icon: <People />, path: '/users' },
 ];
 
 export default function Layout() {
