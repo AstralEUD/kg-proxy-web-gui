@@ -552,13 +552,59 @@ func (e *EBPFService) saveTrafficSnapshot() {
 	var totalBytes int64
 	countryCount := make(map[string]int)
 
-	for _, entry := range e.trafficData {
-		totalPackets += int64(entry.PacketCount)
-		totalBytes += entry.ByteCount
-		if entry.Blocked {
-			blockedPackets += int64(entry.PacketCount)
+	// TRY Global Stats first (more accurate)
+	usedGlobalStats := false
+	if e.objs != nil {
+		if objs, ok := e.objs.(*xdpObjects); ok {
+			// Helper to sum PerCPU values
+			sumPerCPU := func(m *ebpf.Map, key uint32) (int64, error) {
+				var values []uint64
+				if err := m.Lookup(key, &values); err != nil {
+					// Fallback for non-PerCPU maps
+					var val uint64
+					if err2 := m.Lookup(key, &val); err2 == nil {
+						return int64(val), nil
+					}
+					return 0, err
+				}
+				var sum int64
+				for _, v := range values {
+					sum += int64(v)
+				}
+				return sum, nil
+			}
+
+			// STAT_TOTAL_PACKETS = 0
+			if val, err := sumPerCPU(objs.GlobalStats, 0); err == nil {
+				totalPackets = val
+				usedGlobalStats = true
+			}
+			// STAT_BLOCKED = 2
+			if val, err := sumPerCPU(objs.GlobalStats, 2); err == nil {
+				blockedPackets = val
+			}
+			// STAT_TOTAL_BYTES = 1
+			if val, err := sumPerCPU(objs.GlobalStats, 1); err == nil {
+				totalBytes = val
+			}
 		}
-		countryCount[entry.CountryCode]++
+	}
+
+	// Fallback to iterating trafficData (less accurate, limited to 1000 entries)
+	if !usedGlobalStats {
+		for _, entry := range e.trafficData {
+			totalPackets += int64(entry.PacketCount)
+			totalBytes += entry.ByteCount
+			if entry.Blocked {
+				blockedPackets += int64(entry.PacketCount)
+			}
+			countryCount[entry.CountryCode]++
+		}
+	} else {
+		// Just for country stats
+		for _, entry := range e.trafficData {
+			countryCount[entry.CountryCode]++
+		}
 	}
 
 	// Calculate PPS (packets per second) based on time elapsed
@@ -608,17 +654,19 @@ func (e *EBPFService) saveTrafficSnapshot() {
 
 	// Create snapshot
 	snapshot := models.TrafficSnapshot{
-		Timestamp:   now,
-		TotalPPS:    totalPPS,
-		TotalBPS:    int64(float64(totalBytes) / elapsed),
-		AllowedPPS:  allowedPPS,
-		BlockedPPS:  blockedPPS,
-		UniqueIPs:   len(e.trafficData),
-		TopCountry:  topCountry,
-		NetworkRX:   networkRX,
-		NetworkTX:   networkTX,
-		CPUUsage:    sysInfo.GetCPUUsage(),
-		MemoryUsage: sysInfo.GetMemoryUsage(),
+		Timestamp:      now,
+		TotalPPS:       totalPPS,
+		TotalBPS:       int64(float64(totalBytes) / elapsed),
+		AllowedPPS:     allowedPPS,
+		BlockedPPS:     blockedPPS,
+		TotalPackets:   totalPackets,
+		BlockedPackets: blockedPackets,
+		UniqueIPs:      len(e.trafficData),
+		TopCountry:     topCountry,
+		NetworkRX:      networkRX,
+		NetworkTX:      networkTX,
+		CPUUsage:       sysInfo.GetCPUUsage(),
+		MemoryUsage:    sysInfo.GetMemoryUsage(),
 	}
 
 	// Save to database
@@ -738,31 +786,47 @@ func (e *EBPFService) getStatsInternal() (DetailedTrafficStats, RawTrafficStats)
 
 	if e.objs != nil {
 		if objs, ok := e.objs.(*xdpObjects); ok {
-			var value uint64
+			// Helper to sum PerCPU values
+			sumPerCPU := func(m *ebpf.Map, key uint32) (int64, error) {
+				var values []uint64
+				if err := m.Lookup(key, &values); err != nil {
+					// Fallback
+					var val uint64
+					if err2 := m.Lookup(key, &val); err2 == nil {
+						return int64(val), nil
+					}
+					return 0, err
+				}
+				var sum int64
+				for _, v := range values {
+					sum += int64(v)
+				}
+				return sum, nil
+			}
 
 			// STAT_TOTAL_PACKETS = 0
-			if err := objs.GlobalStats.Lookup(uint32(0), &value); err == nil {
-				raw.TotalPackets = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 0); err == nil {
+				raw.TotalPackets = val
 			}
 			// STAT_TOTAL_BYTES = 1
-			if err := objs.GlobalStats.Lookup(uint32(1), &value); err == nil {
-				totalBytes = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 1); err == nil {
+				totalBytes = val
 			}
 			// STAT_BLOCKED = 2
-			if err := objs.GlobalStats.Lookup(uint32(2), &value); err == nil {
-				raw.BlockedPackets = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 2); err == nil {
+				raw.BlockedPackets = val
 			}
 			// STAT_RATE_LIMITED = 4
-			if err := objs.GlobalStats.Lookup(uint32(4), &value); err == nil {
-				raw.RateLimitedPackets = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 4); err == nil {
+				raw.RateLimitedPackets = val
 			}
 			// STAT_GEOIP_BLOCKED = 6
-			if err := objs.GlobalStats.Lookup(uint32(6), &value); err == nil {
-				raw.GeoIPPackets = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 6); err == nil {
+				raw.GeoIPPackets = val
 			}
 			// STAT_PKT_INVALID = 7
-			if err := objs.GlobalStats.Lookup(uint32(7), &value); err == nil {
-				raw.InvalidPackets = int64(value)
+			if val, err := sumPerCPU(objs.GlobalStats, 7); err == nil {
+				raw.InvalidPackets = val
 			}
 		}
 	}

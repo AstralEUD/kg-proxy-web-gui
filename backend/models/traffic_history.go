@@ -6,18 +6,20 @@ import (
 
 // TrafficSnapshot stores periodic traffic statistics for time-series analysis
 type TrafficSnapshot struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Timestamp   time.Time `gorm:"index" json:"timestamp"`
-	TotalPPS    int64     `json:"total_pps"`    // Packets per second
-	TotalBPS    int64     `json:"total_bps"`    // Bytes per second
-	AllowedPPS  int64     `json:"allowed_pps"`  // Allowed packets per second
-	BlockedPPS  int64     `json:"blocked_pps"`  // Blocked packets per second
-	UniqueIPs   int       `json:"unique_ips"`   // Number of unique source IPs
-	TopCountry  string    `json:"top_country"`  // Most active country code
-	NetworkRX   int64     `json:"network_rx"`   // Network RX bytes per second
-	NetworkTX   int64     `json:"network_tx"`   // Network TX bytes per second
-	CPUUsage    int       `json:"cpu_usage"`    // CPU usage percentage
-	MemoryUsage int       `json:"memory_usage"` // Memory usage percentage
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Timestamp      time.Time `gorm:"index" json:"timestamp"`
+	TotalPPS       int64     `json:"total_pps"`       // Packets per second
+	TotalBPS       int64     `json:"total_bps"`       // Bytes per second
+	AllowedPPS     int64     `json:"allowed_pps"`     // Allowed packets per second
+	BlockedPPS     int64     `json:"blocked_pps"`     // Blocked packets per second
+	TotalPackets   int64     `json:"total_packets"`   // Cumulative total packets (at snapshot time)
+	BlockedPackets int64     `json:"blocked_packets"` // Cumulative blocked packets (at snapshot time)
+	UniqueIPs      int       `json:"unique_ips"`      // Number of unique source IPs
+	TopCountry     string    `json:"top_country"`     // Most active country code
+	NetworkRX      int64     `json:"network_rx"`      // Network RX bytes per second
+	NetworkTX      int64     `json:"network_tx"`      // Network TX bytes per second
+	CPUUsage       int       `json:"cpu_usage"`       // CPU usage percentage
+	MemoryUsage    int       `json:"memory_usage"`    // Memory usage percentage
 }
 
 // AttackEvent records detected attacks and automatic responses
