@@ -12,17 +12,18 @@ import logo from '../assets/logo.png';
 
 const drawerWidth = 260;
 
-{ text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
-{ text: 'Traffic Analysis', icon: <Speed />, path: '/traffic' },
-{ text: 'Network Tools', icon: <RouterIcon />, path: '/tools/network' },
-{ text: 'Origins', icon: <HubIcon />, path: '/origins' },
-{ text: 'Services', icon: <HubIcon />, path: '/services' },
-{ text: 'Policy / Firewall', icon: <SecurityIcon />, path: '/policy' },
-{ text: 'Access Rules', icon: <Block />, path: '/security/rules' },
-{ text: 'Active Blocks', icon: <Block />, path: '/security/blocks' },
-{ text: 'Country Groups', icon: <PublicIcon />, path: '/security/groups' },
-{ text: 'Attack History', icon: <History />, path: '/attacks' },
-{ text: 'User Management', icon: <People />, path: '/users' },
+const menuItems = [
+    { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
+    { text: 'Traffic Analysis', icon: <Speed />, path: '/traffic' },
+    { text: 'Network Tools', icon: <RouterIcon />, path: '/tools/network' },
+    { text: 'Origins', icon: <HubIcon />, path: '/origins' },
+    { text: 'Services', icon: <HubIcon />, path: '/services' },
+    { text: 'Policy / Firewall', icon: <SecurityIcon />, path: '/policy' },
+    { text: 'Access Rules', icon: <Block />, path: '/security/rules' },
+    { text: 'Active Blocks', icon: <Block />, path: '/security/blocks' },
+    { text: 'Country Groups', icon: <PublicIcon />, path: '/security/groups' },
+    { text: 'Attack History', icon: <History />, path: '/attacks' },
+    { text: 'User Management', icon: <People />, path: '/users' },
 ];
 
 export default function Layout() {
