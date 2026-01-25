@@ -334,7 +334,7 @@ func (e *EBPFService) loadEBPFProgram() error {
 	e.objs = objs
 
 	// Initialize Ring Buffer
-	if eventsMap := objs.XdpMaps.Events; eventsMap != nil {
+	if eventsMap := objs.xdpMaps.Events; eventsMap != nil {
 		rb, err := ringbuf.NewReader(eventsMap)
 		if err != nil {
 			system.Warn("Failed to create ringbuf reader: %v", err)
