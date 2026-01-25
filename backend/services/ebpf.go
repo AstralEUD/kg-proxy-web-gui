@@ -1442,24 +1442,22 @@ func (e *EBPFService) UpdateAllowIPs(ips []string) error {
 	// Or we just add. For deletion, we might need a full overwrite or explicit delete.
 	// Assuming `ips` is the FULL list of allowed IPs.
 
-	// Better approach for full sync: read all keys, diff, or nuke and rebuild.
-	// HASH map doesn't support "Clear".
-	// We will just add for now. Proper sync requires more code.
-	// Let's iterate and delete all first? Expensive if large.
-	// Given manual whitelist is usually small (<100), iterate-delete is fine.
+	// FIXME: Iteration can cause deadlock. Skip for now and rely on overwrites.
+	// We'll just add new IPs. Old entries will remain but that's safer than blocking.
+	/*
+		var key [4]byte
+		var value uint32
+		var keysToDelete [][4]byte
 
-	var key [4]byte
-	var value uint32
-	var keysToDelete [][4]byte
+		iter := objs.WhiteList.Iterate()
+		for iter.Next(&key, &value) {
+			keysToDelete = append(keysToDelete, key)
+		}
 
-	iter := objs.WhiteList.Iterate()
-	for iter.Next(&key, &value) {
-		keysToDelete = append(keysToDelete, key)
-	}
-
-	for _, k := range keysToDelete {
-		objs.WhiteList.Delete(k)
-	}
+		for _, k := range keysToDelete {
+			objs.WhiteList.Delete(k)
+		}
+	*/
 
 	for _, ipStr := range ips {
 		// Try single IP first
