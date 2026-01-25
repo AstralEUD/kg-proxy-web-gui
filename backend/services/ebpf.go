@@ -340,9 +340,13 @@ func (e *EBPFService) loadEBPFProgram() error {
 		} else {
 			e.ringBuf = rb
 			go e.consumeRingBuffer()
-			// Start Smart Batching Aggregator (only if RingBuffer is available)
-			go e.startEventAggregator()
-			system.Info("eBPF event aggregator started (3s batching)")
+			// Start Smart Batching Aggregator (only if RingBuffer AND stopChan are available)
+			if e.stopChan != nil {
+				go e.startEventAggregator()
+				system.Info("eBPF event aggregator started (3s batching)")
+			} else {
+				system.Warn("stopChan not initialized, skipping aggregator")
+			}
 		}
 	} else {
 		system.Warn("Events map not found in eBPF objects, attack logging disabled")
