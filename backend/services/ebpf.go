@@ -1425,8 +1425,9 @@ func (e *EBPFService) UpdateGeoAllowed(allowedCountries []string) error {
 
 // UpdateAllowIPs updates the white_list BPF map
 func (e *EBPFService) UpdateAllowIPs(ips []string) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	// CRITICAL: RLock removed to prevent deadlock during startup
+	// The objs access is safe because Enable() sets it before calling SyncWhitelist
+	// and we don't support dynamic disable/re-enable during runtime
 
 	if e.objs == nil {
 		return nil // Not in eBPF mode
