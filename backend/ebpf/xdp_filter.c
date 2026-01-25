@@ -33,11 +33,23 @@ struct packet_stats {
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 300000); // Expanded for stability
+    __uint(type, BPF_MAP_TYPE_PERCPU_LRU_HASH);
+    __uint(max_entries, 300000); // Optimized for 2CPU VPS
     __type(key, __u32);
     __type(value, struct packet_stats);
 } ip_stats SEC(".maps");
+
+// Ring Buffer Event
+struct event_data {
+    __u32 src_ip;
+    __u32 reason;
+    __u64 timestamp;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 256 * 1024); // 256KB Ring Buffer
+} events SEC(".maps");
 
 // LPM Trie Key
 struct lpm_key {
@@ -119,7 +131,7 @@ struct {
 
 // Global statistics
 struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 8);
     __type(key, __u32);
     __type(value, __u64);
@@ -155,7 +167,7 @@ struct port_stats {
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 65536);
     __type(key, __u16);
     __type(value, struct port_stats);
@@ -259,6 +271,19 @@ static __always_inline int validate_packet(struct xdp_md *ctx) {
 // ============================================================
 // MAIN XDP FILTER
 // ============================================================
+// ============================================================
+// EVENT RECORDING
+// ============================================================
+static __always_inline void record_event(__u32 src_ip, __u32 reason) {
+    struct event_data *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (e) {
+        e->src_ip = src_ip;
+        e->reason = reason;
+        e->timestamp = bpf_ktime_get_ns();
+        bpf_ringbuf_submit(e, 0);
+    }
+}
+
 SEC("xdp")
 int xdp_traffic_filter(struct xdp_md *ctx) {
     __u32 src_ip = 0;
@@ -291,7 +316,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         if (validate_packet(ctx) < 0) {
             key = STAT_PKT_INVALID;
             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-            if (cnt) __sync_fetch_and_add(cnt, 1);
+            if (cnt) *cnt += 1;
+            // Record event for invalid packet? Maybe too noisy.
             return XDP_DROP;
         }
     }
@@ -317,7 +343,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if (bpf_map_lookup_elem(&white_list, &w_key)) {
         key = STAT_ALLOWED;
         __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-        if (cnt) __sync_fetch_and_add(cnt, 1);
+        if (cnt) *cnt += 1;
         return XDP_PASS;
     }
 
@@ -337,7 +363,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
             // Still blocked (permanent or not expired)
             key = STAT_BLOCKED;
             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-            if (cnt) __sync_fetch_and_add(cnt, 1);
+            if (cnt) *cnt += 1;
+            // record_event(src_ip, blocked->reason); // Too noisy for already blocked
             return XDP_DROP;
         }
     }
@@ -352,7 +379,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         if ((now - *conn_last_seen) < CONN_TRACK_TTL_NS) {
             key = STAT_CONN_BYPASS;
             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-            if (cnt) __sync_fetch_and_add(cnt, 1);
+            if (cnt) *cnt += 1;
             return XDP_PASS;
         }
     }
@@ -377,7 +404,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
                         
                         key = STAT_ALLOWED;
                         __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-                        if (cnt) __sync_fetch_and_add(cnt, 1);
+                        if (cnt) *cnt += 1;
                         return XDP_PASS;
                     }
                 }
@@ -422,7 +449,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
                 
                 key = STAT_RATE_LIMITED;
                 __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-                if (cnt) __sync_fetch_and_add(cnt, 1);
+                if (cnt) *cnt += 1;
+                record_event(src_ip, BLOCK_REASON_RATE_LIMIT);
                 return XDP_DROP;
             }
             rl->tokens = new_tokens - 1;
@@ -445,11 +473,13 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
         if (!bpf_map_lookup_elem(&geo_allowed, &geo_key)) {
             key = STAT_GEOIP_BLOCKED;
             __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-            if (cnt) __sync_fetch_and_add(cnt, 1);
+            if (cnt) *cnt += 1;
             
             key = STAT_BLOCKED;
             cnt = bpf_map_lookup_elem(&global_stats, &key);
-            if (cnt) __sync_fetch_and_add(cnt, 1);
+            if (cnt) *cnt += 1;
+            
+            record_event(src_ip, BLOCK_REASON_GEOIP);
             return XDP_DROP;
         }
     }
@@ -459,17 +489,17 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     // ============================================================
     key = STAT_TOTAL_PACKETS;
     __u64 *cnt = bpf_map_lookup_elem(&global_stats, &key);
-    if (cnt) __sync_fetch_and_add(cnt, 1);
+    if (cnt) *cnt += 1;
 
     key = STAT_TOTAL_BYTES;
     cnt = bpf_map_lookup_elem(&global_stats, &key);
-    if (cnt) __sync_fetch_and_add(cnt, pkt_size);
+    if (cnt) *cnt += pkt_size;
 
     // Per-IP stats
     struct packet_stats *stats = bpf_map_lookup_elem(&ip_stats, &src_ip);
     if (stats) {
-        __sync_fetch_and_add(&stats->packets, 1);
-        __sync_fetch_and_add(&stats->bytes, pkt_size);
+        stats->packets += 1;
+        stats->bytes += pkt_size;
         stats->last_seen = bpf_ktime_get_ns();
     } else {
         struct packet_stats new_stats = {
@@ -482,8 +512,8 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
     if (dst_port > 0) {
         struct port_stats *pstats = bpf_map_lookup_elem(&port_stats, &dst_port);
         if (pstats) {
-            __sync_fetch_and_add(&pstats->packets, 1);
-            __sync_fetch_and_add(&pstats->bytes, pkt_size);
+            pstats->packets += 1;
+            pstats->bytes += pkt_size;
         } else {
             struct port_stats new_pstats = { .packets = 1, .bytes = pkt_size };
             bpf_map_update_elem(&port_stats, &dst_port, &new_pstats, BPF_ANY);
@@ -492,7 +522,7 @@ int xdp_traffic_filter(struct xdp_md *ctx) {
 
     key = STAT_ALLOWED;
     cnt = bpf_map_lookup_elem(&global_stats, &key);
-    if (cnt) __sync_fetch_and_add(cnt, 1);
+    if (cnt) *cnt += 1;
 
     return XDP_PASS;
 }

@@ -57,8 +57,10 @@ type RawTrafficStats struct {
 
 // BlockedIPInfo is the API response format
 type BlockedIPInfo struct {
-	IP        string    `json:"ip"`
-	Reason    string    `json:"reason"`      // "manual", "rate_limit", "geoip", "flood"
-	ExpiresAt time.Time `json:"expires_at"`  // Zero time if permanent
-	TTL       int64     `json:"ttl_seconds"` // Remaining seconds, -1 if permanent
+	IP          string    `json:"ip"`
+	Reason      string    `json:"reason"`      // "manual", "rate_limit", "geoip", "flood"
+	ExpiresAt   time.Time `json:"expires_at"`  // Zero time if permanent
+	TTL         int64     `json:"ttl_seconds"` // Remaining seconds, -1 if permanent
+	CountryCode string    `json:"countryCode"`
+	CountryName string    `json:"countryName"`
 }

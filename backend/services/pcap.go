@@ -2,7 +2,6 @@ package services
 
 import (
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -33,17 +32,8 @@ var (
 	pcapOnce     sync.Once
 )
 
-// NewPCAPService creates a new instance of the PCAP service based on the OS
-func NewPCAPService() PCAPService {
-	pcapOnce.Do(func() {
-		if runtime.GOOS == "linux" {
-			pcapInstance = newLinuxPCAPService()
-		} else {
-			pcapInstance = newWindowsPCAPService()
-		}
-	})
-	return pcapInstance
-}
+// NewPCAPService is now defined in pcap_linux.go and pcap_windows.go
+// to ensure compile-time safety.
 
 // Common helper to get capture directory
 func getCaptureDir() string {

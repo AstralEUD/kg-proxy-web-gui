@@ -61,14 +61,40 @@ export default function Traffic() {
                 setBackendStats(res.data);
                 setLoading(false);
 
-                // Fetch eBPF traffic data
+                // Fetch eBPF traffic data and blocked IPs
                 try {
-                    const trafficRes = await client.get('/traffic/data');
+                    const [trafficRes, blockedRes] = await Promise.all([
+                        client.get('/traffic/data'),
+                        client.get('/traffic/blocked').catch(() => ({ data: { data: [] } }))
+                    ]);
+
+                    let combined = [];
                     if (trafficRes.data.enabled && trafficRes.data.data) {
-                        setData(trafficRes.data.data);
-                    } else {
-                        setData([]);
+                        combined = [...trafficRes.data.data];
                     }
+
+                    if (blockedRes.data.data) {
+                        const blockedIPs = blockedRes.data.data;
+                        const existingIPs = new Set(combined.map(d => d.ip));
+
+                        blockedIPs.forEach(b => {
+                            if (!existingIPs.has(b.ip)) {
+                                combined.push({
+                                    id: `blocked-${b.ip}`,
+                                    ip: b.ip,
+                                    port: 0,
+                                    countryCode: b.countryCode || 'XX',
+                                    countryName: b.countryName || 'Unknown',
+                                    pps: 0,
+                                    total_bytes: 0,
+                                    risk_score: 100,
+                                    status: 'blocked',
+                                    last_seen: 'Blocked'
+                                });
+                            }
+                        });
+                    }
+                    setData(combined);
                 } catch (trafficErr) {
                     console.error("Failed to fetch traffic data:", trafficErr);
                     setData([]);

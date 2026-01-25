@@ -22,6 +22,14 @@ type LinuxPCAPService struct {
 	captureDir string
 }
 
+// NewPCAPService creates a new instance of the Linux PCAP service
+func NewPCAPService() PCAPService {
+	pcapOnce.Do(func() {
+		pcapInstance = newLinuxPCAPService()
+	})
+	return pcapInstance
+}
+
 func newLinuxPCAPService() *LinuxPCAPService {
 	dir := getCaptureDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {

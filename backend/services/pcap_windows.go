@@ -12,6 +12,14 @@ type WindowsPCAPService struct {
 	status PCAPStatus
 }
 
+// NewPCAPService creates a new instance of the Windows PCAP service (stub)
+func NewPCAPService() PCAPService {
+	pcapOnce.Do(func() {
+		pcapInstance = newWindowsPCAPService()
+	})
+	return pcapInstance
+}
+
 func newWindowsPCAPService() *WindowsPCAPService {
 	// Ensure capture directory exists even on Windows for consistency
 	os.MkdirAll(getCaptureDir(), 0755)

@@ -5,6 +5,8 @@ WireGuard VPN 터널링, eBPF/XDP 기반의 고속 트래픽 필터링, 그리�
 
 ![Version](https://img.shields.io/badge/version-1.1-blue) ![Go](https://img.shields.io/badge/backend-Go_1.21-00ADD8) ![React](https://img.shields.io/badge/frontend-React_18-61DAFB) ![License](https://img.shields.io/badge/license-Private-red)
 
+> 📘 **Documentation**: 상세한 한국어 매뉴얼은 [MANUAL_KR.md](MANUAL_KR.md)를 참고하세요.
+
 ## ✨ 핵심 기능
 
 ### 🛡️ 강력한 보안 및 DDoS 방어

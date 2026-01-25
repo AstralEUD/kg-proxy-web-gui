@@ -3,6 +3,9 @@
 package services
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
 	"gorm.io/gorm"
 )
 
@@ -88,6 +92,9 @@ type EBPFService struct {
 	tcLegacyAttached bool   // True if legacy tc command was used
 	tcLegacyIface    string // Interface name for legacy cleanup
 	bpfPinPath       string // Path to pinned BPF maps
+
+	// RingBuffer
+	ringBuf *ringbuf.Reader
 }
 
 func NewEBPFService() *EBPFService {
@@ -194,6 +201,17 @@ func (e *EBPFService) loadEBPFProgram() error {
 		return fmt.Errorf("loading eBPF objects: %w", err)
 	}
 	e.objs = objs
+
+	// Initialize Ring Buffer
+	if eventsMap := objs.XdpMaps.Events; eventsMap != nil {
+		rb, err := ringbuf.NewReader(eventsMap)
+		if err != nil {
+			system.Warn("Failed to create ringbuf reader: %v", err)
+		} else {
+			e.ringBuf = rb
+			go e.consumeRingBuffer()
+		}
+	}
 
 	// Populate GeoIP map before attaching to avoid dropping all traffic in hard blocking mode
 	if err := e.UpdateGeoIPData(); err != nil {
@@ -473,6 +491,47 @@ func (e *EBPFService) startGeoIPSyncLoop() {
 	}
 }
 
+// consumeRingBuffer reads events from the Ring Buffer
+func (e *EBPFService) consumeRingBuffer() {
+	if e.ringBuf == nil {
+		return
+	}
+
+	// Match C struct event_data
+	var event struct {
+		SrcIP     uint32
+		Reason    uint32
+		Timestamp uint64
+	}
+
+	for {
+		select {
+		case <-e.stopChan:
+			if e.ringBuf != nil {
+				e.ringBuf.Close()
+			}
+			return
+		default:
+		}
+
+		record, err := e.ringBuf.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				return
+			}
+			continue
+		}
+
+		if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
+			continue
+		}
+
+		// Log event (TODO: Broadcast to Websocket)
+		// For now, we rely on stats counters for dashboard, but this enables real-time logs
+		// system.Debug("Blocked IP: %d, Reason: %d", event.SrcIP, event.Reason)
+	}
+}
+
 // readEBPFMaps reads statistics from eBPF maps
 func (e *EBPFService) readEBPFMaps() {
 	if e.objs == nil {
@@ -484,21 +543,32 @@ func (e *EBPFService) readEBPFMaps() {
 		return
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	// Create new local slice (Double Buffering)
+	newTrafficData := make([]TrafficEntry, 0, 1000)
 
-	// Clear old data
-	e.trafficData = make([]TrafficEntry, 0)
-
-	// Iterate over the map
-	// Use [4]byte for key to parse IP correctly regardless of host endianness
+	// Iterate over the map (Per-CPU)
 	var key [4]byte
-	var value PacketStats
+	var values []PacketStats // Per-CPU means value is a slice
 
-	// We need to lock while iterating if we were modifying, but here we just read.
-	// BPF map iteration is generally safe.
 	iter := objs.IpStats.Iterate()
-	for iter.Next(&key, &value) {
+	for iter.Next(&key, &values) {
+		// Sum up Per-CPU values
+		var totalPackets uint64
+		var totalBytes uint64
+		var lastSeen uint64
+		var blocked bool
+
+		for _, v := range values {
+			totalPackets += v.Packets
+			totalBytes += v.Bytes
+			if v.LastSeen > lastSeen {
+				lastSeen = v.LastSeen
+			}
+			if v.Blocked > 0 {
+				blocked = true
+			}
+		}
+
 		// Convert key bytes directly to IP
 		ip := net.IPv4(key[0], key[1], key[2], key[3])
 
@@ -511,19 +581,19 @@ func (e *EBPFService) readEBPFMaps() {
 		// Create entry
 		entry := TrafficEntry{
 			SourceIP:    ip.String(),
-			DestPort:    0, // Not tracked in current eBPF program
+			DestPort:    0,
 			Protocol:    "IP",
-			PacketCount: int(value.Packets),
-			ByteCount:   int64(value.Bytes),
-			Timestamp:   e.bootTime.Add(time.Duration(value.LastSeen)), // Correct monotonic -> wall time
-			Blocked:     value.Blocked == 1,
+			PacketCount: int(totalPackets),
+			ByteCount:   int64(totalBytes),
+			Timestamp:   e.bootTime.Add(time.Duration(lastSeen)),
+			Blocked:     blocked,
 			CountryCode: countryCode,
 		}
 
-		e.trafficData = append(e.trafficData, entry)
+		newTrafficData = append(newTrafficData, entry)
 
 		// Limit entries
-		if len(e.trafficData) >= 1000 {
+		if len(newTrafficData) >= 1000 {
 			break
 		}
 	}
@@ -532,12 +602,20 @@ func (e *EBPFService) readEBPFMaps() {
 		system.Warn("Error iterating ip_stats map: %v", err)
 	}
 
+	// Swap pointer (Atomic-like)
+	e.mu.Lock()
+	e.trafficData = newTrafficData
+	e.mu.Unlock()
+
 	// Save periodic snapshot (every 1 minute)
 	e.saveTrafficSnapshot()
 }
 
 // saveTrafficSnapshot saves traffic statistics to the database for historical analysis
 func (e *EBPFService) saveTrafficSnapshot() {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.db == nil {
 		return
 	}
@@ -983,11 +1061,20 @@ func (e *EBPFService) LookupBlockedIP(ipStr string) *BlockedIPInfo {
 		}
 	}
 
+	// Get Country Info
+	countryName := "Unknown"
+	countryCode := "XX"
+	if e.geoIPService != nil {
+		countryName, countryCode = e.geoIPService.GetCountry(ipStr)
+	}
+
 	return &BlockedIPInfo{
-		IP:        ipStr,
-		Reason:    reason,
-		ExpiresAt: expiresAt,
-		TTL:       ttl,
+		IP:          ipStr,
+		Reason:      reason,
+		ExpiresAt:   expiresAt,
+		TTL:         ttl,
+		CountryCode: countryCode,
+		CountryName: countryName,
 	}
 }
 
@@ -1037,11 +1124,20 @@ func (e *EBPFService) IterateBlockedIPs() ([]BlockedIPInfo, error) {
 			}
 		}
 
+		// Get Country Info
+		countryName := "Unknown"
+		countryCode := "XX"
+		if e.geoIPService != nil {
+			countryName, countryCode = e.geoIPService.GetCountry(ip)
+		}
+
 		blockedList = append(blockedList, BlockedIPInfo{
-			IP:        ip,
-			Reason:    reason,
-			ExpiresAt: expiresAt,
-			TTL:       ttl,
+			IP:          ip,
+			Reason:      reason,
+			ExpiresAt:   expiresAt,
+			TTL:         ttl,
+			CountryCode: countryCode,
+			CountryName: countryName,
 		})
 
 		if len(blockedList) >= 1000 {
@@ -1115,6 +1211,9 @@ func (e *EBPFService) SyncWhitelist() error {
 
 // UpdateBlockedIPs updates the blocked_ips BPF map
 func (e *EBPFService) UpdateBlockedIPs(ips []string) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.objs == nil {
 		return nil // Not in eBPF mode
 	}
@@ -1162,6 +1261,9 @@ func (e *EBPFService) UpdateBlockedIPs(ips []string) error {
 
 // UpdateGeoAllowed updates the geo_allowed BPF map
 func (e *EBPFService) UpdateGeoAllowed(allowedCountries []string) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.objs == nil {
 		return nil // Not in eBPF mode
 	}
@@ -1175,6 +1277,9 @@ func (e *EBPFService) UpdateGeoAllowed(allowedCountries []string) error {
 
 // UpdateAllowIPs updates the white_list BPF map
 func (e *EBPFService) UpdateAllowIPs(ips []string) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.objs == nil {
 		return nil // Not in eBPF mode
 	}
@@ -1263,11 +1368,11 @@ func (e *EBPFService) ResetTrafficStats() error {
 			// Simple approach: Delete keys one by one.
 
 			var key [4]byte
-			var value PacketStats
+			var values []PacketStats
 			var keysToDelete [][4]byte
 
 			iter := objs.IpStats.Iterate()
-			for iter.Next(&key, &value) {
+			for iter.Next(&key, &values) {
 				keysToDelete = append(keysToDelete, key)
 			}
 			if err := iter.Err(); err != nil {
@@ -1357,6 +1462,9 @@ type PortStats struct {
 
 // UpdateConfig updates the eBPF config map with current settings
 func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.objs == nil {
 		return nil
 	}
@@ -1394,6 +1502,9 @@ func (e *EBPFService) UpdateConfig(hardBlocking bool, rateLimitPPS int) error {
 
 // UpdateMaintenanceMode updates the eBPF bypass for maintenance mode
 func (e *EBPFService) UpdateMaintenanceMode(enabled bool) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if e.objs == nil {
 		return nil
 	}
@@ -1430,17 +1541,23 @@ func (e *EBPFService) GetPortStats() []PortStats {
 
 	var stats []PortStats
 	var key uint16
-	var value struct {
+	var value []struct {
 		Packets uint64
 		Bytes   uint64
 	}
 
 	iter := objs.PortStats.Iterate()
 	for iter.Next(&key, &value) {
+		var totalPackets, totalBytes uint64
+		for _, v := range value {
+			totalPackets += v.Packets
+			totalBytes += v.Bytes
+		}
+
 		stats = append(stats, PortStats{
 			Port:    key,
-			Packets: value.Packets,
-			Bytes:   value.Bytes,
+			Packets: totalPackets,
+			Bytes:   totalBytes,
 		})
 
 		// Limit
@@ -1500,9 +1617,10 @@ func (e *EBPFService) AddBlockedIP(ipStr string, duration time.Duration) error {
 	}
 
 	if err := objs.BlockedIps.Put(key, value); err != nil {
-		return fmt.Errorf("bpf put: %w", err)
+		return fmt.Errorf("failed to add blocked IP %s: %w", ipStr, err)
 	}
 
+	system.Info("Added blocked IP: %s (Duration: %s)", ipStr, duration)
 	return nil
 }
 
@@ -1525,17 +1643,19 @@ func (e *EBPFService) RemoveBlockedIP(ipStr string) error {
 		return fmt.Errorf("invalid IP: %s", ipStr)
 	}
 
+	// Construct Key
 	key := LpmKey{
 		PrefixLen: 32,
 	}
 	copy(key.Data[:], ip.To4())
 
 	if err := objs.BlockedIps.Delete(key); err != nil {
-		if strings.Contains(err.Error(), "key does not exist") {
-			return nil
-		}
-		return fmt.Errorf("bpf delete: %w", err)
+		// Verify if it actually failed or just didn't exist
+		// For BPF maps, delete on non-existent key returns error, which is fine to ignore or report as "not found"
+		// But for now we just return error if it's strictly a system error
+		return fmt.Errorf("failed to remove blocked IP %s: %w", ipStr, err)
 	}
 
+	system.Info("Removed blocked IP: %s", ipStr)
 	return nil
 }
