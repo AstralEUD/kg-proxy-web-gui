@@ -183,8 +183,7 @@ func (e *EBPFService) Enable() error {
 	// Start GeoIP map sync loop (retry initially to catch up with GeoIP DB load)
 	go e.startGeoIPSyncLoop()
 
-	// Start Event Aggregator (Smart Batching)
-	go e.startEventAggregator()
+	// Event Aggregator will be started if RingBuffer is available
 
 	system.Info("eBPF XDP filter loaded and attached to %s", e.ifaceName)
 	return nil
@@ -341,7 +340,12 @@ func (e *EBPFService) loadEBPFProgram() error {
 		} else {
 			e.ringBuf = rb
 			go e.consumeRingBuffer()
+			// Start Smart Batching Aggregator (only if RingBuffer is available)
+			go e.startEventAggregator()
+			system.Info("eBPF event aggregator started (3s batching)")
 		}
+	} else {
+		system.Warn("Events map not found in eBPF objects, attack logging disabled")
 	}
 
 	// Populate GeoIP map before attaching to avoid dropping all traffic in hard blocking mode
