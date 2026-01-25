@@ -33,7 +33,7 @@ struct packet_stats {
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_LRU_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 300000); // Optimized for 2CPU VPS
     __type(key, __u32);
     __type(value, struct packet_stats);
