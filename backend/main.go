@@ -331,6 +331,9 @@ func main() {
 	// Server Info (Public IP, etc.)
 	protected.Get("/server/info", h.GetServerInfo)
 
+	// PCAP (Packet Capture)
+	handlers.SetupPCAPRoutes(protected)
+
 	// 5. Serve Static Files (Frontend)
 	frontendPath := "./frontend/dist"
 	if _, err := os.Stat("/opt/kg-proxy/frontend/dist"); err == nil {

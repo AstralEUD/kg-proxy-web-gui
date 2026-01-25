@@ -19,6 +19,7 @@ import {
     Speed as SpeedIcon
 } from '@mui/icons-material';
 import client from '../api/client';
+import PCAPControl from '../components/PCAPControl';
 
 const TerminalOutput = ({ output }) => (
     <Box
@@ -215,6 +216,11 @@ const NetworkTools = () => {
                             )}
                         </CardContent>
                     </Card>
+                </Grid>
+
+                {/* PCAP Tool */}
+                <Grid item xs={12}>
+                    <PCAPControl />
                 </Grid>
             </Grid>
         </Box>

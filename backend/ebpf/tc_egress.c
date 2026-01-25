@@ -19,7 +19,7 @@
 // Value: last_seen timestamp (nanoseconds, monotonic)
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 50000);
+    __uint(max_entries, 300000); // Expanded for stability
     __type(key, __u32);    // dest_ip (network byte order)
     __type(value, __u64);  // last_seen (ns)
     __uint(pinning, LIBBPF_PIN_BY_NAME);  // Pin to /sys/fs/bpf/

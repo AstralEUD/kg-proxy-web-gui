@@ -34,7 +34,7 @@ struct packet_stats {
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 100000);
+    __uint(max_entries, 300000); // Expanded for stability
     __type(key, __u32);
     __type(value, struct packet_stats);
 } ip_stats SEC(".maps");
@@ -78,7 +78,7 @@ struct block_entry {
 // Blacklist (block) - Now with TTL support
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __uint(max_entries, 100000);
+    __uint(max_entries, 300000); // Expanded
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, struct lpm_key);
     __type(value, struct block_entry);
@@ -96,7 +96,7 @@ struct {
 // Active connections (TC egress tracking)
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 50000);
+    __uint(max_entries, 300000); // Expanded for stability
     __type(key, __u32);
     __type(value, __u64);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -187,6 +187,15 @@ static __always_inline int parse_ip_packet(struct xdp_md *ctx, __u32 *src_ip, __
     void *l4_header = (void *)ip + ip_len;
     if (l4_header > data_end) return 0;
 
+    // Handle Fragmentation: If offset > 0, we might not have L4 header
+    __u16 frag_off = bpf_ntohs(ip->frag_off);
+    if ((frag_off & 0x1FFF) > 0) {
+        // This is a fragment (not the first one).
+        // It likely doesn't have ports at the beginning of payload.
+        // We return 0 (success) but ports remain 0.
+        return 0;
+    }
+
     if (ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP) {
         if (l4_header + 4 > data_end) return 0;
         __u8 *ports = (__u8 *)l4_header;
@@ -224,8 +233,15 @@ static __always_inline int validate_packet(struct xdp_md *ctx) {
     if (total_len < 20) return -1;
     
     // 4. TTL must be non-zero (TTL 0 is invalid)
-    // Note: Removed TTL > 128 check to avoid blocking VPN/tunnel traffic
     if (ip->ttl == 0) return -1;
+
+    // Check for Fragmentation
+    __u16 frag_off = bpf_ntohs(ip->frag_off);
+    if ((frag_off & 0x1FFF) > 0) {
+        // Fragmented packet (offset > 0). 
+        // Cannot validate L4 headers as they might not be present.
+        return 0; 
+    }
     
     // 5. UDP specific: Length must be >= 8
     if (ip->protocol == IPPROTO_UDP) {
