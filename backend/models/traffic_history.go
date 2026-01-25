@@ -32,6 +32,7 @@ type AttackEvent struct {
 	AttackType  string    `json:"attack_type"` // "flood", "geoip_violation", "blacklist", "rate_limit"
 	PPS         int64     `json:"pps"`         // Packets per second at detection
 	BPS         int64     `json:"bps"`         // Bytes per second at detection
+	Count       int64     `json:"count"`       // Total packets in this batch (aggregated)
 	Duration    int       `json:"duration"`    // Attack duration in seconds (if known)
 	Action      string    `json:"action"`      // "blocked", "rate_limited", "warned"
 	Details     string    `json:"details"`     // Additional details (JSON or text)

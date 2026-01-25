@@ -50,6 +50,15 @@ type BlockEntry struct {
 	Pad       uint32
 }
 
+// AggregatedEvent for smart batching
+type AggregatedEvent struct {
+	SourceIP  uint32
+	Reason    uint32
+	Count     int64
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
 // EBPFService manages eBPF/XDP traffic monitoring
 type EBPFService struct {
 	enabled     bool
@@ -58,6 +67,8 @@ type EBPFService struct {
 	stopChan    chan struct{}
 	isRunning   bool
 
+	// Event Aggregation
+	eventChan chan AggregatedEvent
 	// Real eBPF objects - using interface{} to avoid build errors when generated files are missing
 	// In production (Linux build), this will hold *xdpObjects
 	objs         interface{}
@@ -129,6 +140,7 @@ func NewEBPFService() *EBPFService {
 		bootTime:     boot,
 		lastSnapshot: time.Now(),
 		bpfPinPath:   "/sys/fs/bpf/kg_proxy",
+		eventChan:    make(chan AggregatedEvent, 10000), // Buffer size for high PPS
 	}
 }
 
@@ -171,8 +183,127 @@ func (e *EBPFService) Enable() error {
 	// Start GeoIP map sync loop (retry initially to catch up with GeoIP DB load)
 	go e.startGeoIPSyncLoop()
 
+	// Start Event Aggregator (Smart Batching)
+	go e.startEventAggregator()
+
 	system.Info("eBPF XDP filter loaded and attached to %s", e.ifaceName)
 	return nil
+}
+
+// ByteOrder converters
+func intToIP(nn uint32) string {
+	ip := make(net.IP, 4)
+	binary.LittleEndian.PutUint32(ip, nn)
+	return ip.String()
+}
+
+// startEventAggregator processes events from RingBuffer with smart batching
+func (e *EBPFService) startEventAggregator() {
+	// Aggregation Map: Key "IP-Reason" -> *AggregatedEvent
+	// We use string key because we can't use struct as map key if it contains slices usually, but here struct is simple.
+	// Using struct key directly is faster.
+	type AggKey struct {
+		SrcIP  uint32
+		Reason uint32
+	}
+
+	aggMap := make(map[AggKey]*AggregatedEvent)
+
+	// Batch Interval: 3 Seconds (per user request)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(aggMap) == 0 {
+			return
+		}
+
+		batch := make([]models.AttackEvent, 0, len(aggMap))
+
+		// Hard limit batch size to prevent DB choke (e.g., 2000 events per flush)
+		// If more than 2000 unique IP+Reason pairs, we might need multiple flushes or drop some.
+		// For now, we process all but use CreateInBatches.
+
+		for _, agg := range aggMap {
+			ipStr := intToIP(agg.SourceIP)
+
+			// Get Country
+			countryName := "Unknown"
+			countryCode := "XX"
+			if e.geoIPService != nil {
+				countryName, countryCode = e.geoIPService.GetCountry(ipStr)
+			}
+
+			// Map Reason Code to String
+			// #define BLOCK_REASON_MANUAL     1
+			// #define BLOCK_REASON_RATE_LIMIT 2
+			// #define BLOCK_REASON_GEOIP      3
+			// #define BLOCK_REASON_FLOOD      4
+			reasonStr := "unknown"
+			switch agg.Reason {
+			case 1:
+				reasonStr = "blacklist"
+			case 2:
+				reasonStr = "rate_limit"
+			case 3:
+				reasonStr = "geoip_violation"
+			case 4:
+				reasonStr = "flood"
+			}
+
+			// Calculate PPS (Average over the batch interval, or just store count)
+			// Storing total count in 'Count' field.
+			// PPS = Count / 3 (since batch is 3s)
+			pps := agg.Count / 3
+			if pps == 0 && agg.Count > 0 {
+				pps = 1
+			}
+
+			batch = append(batch, models.AttackEvent{
+				Timestamp:   agg.FirstSeen, // Use first seen time for the record
+				SourceIP:    ipStr,
+				CountryCode: countryCode,
+				CountryName: countryName,
+				AttackType:  reasonStr,
+				PPS:         pps,
+				Count:       agg.Count,
+				Action:      "blocked",
+				Details:     fmt.Sprintf("Blocked %d packets in 3s batch", agg.Count),
+			})
+		}
+
+		// Save to DB
+		if e.db != nil && len(batch) > 0 {
+			if err := e.db.CreateInBatches(batch, 100).Error; err != nil {
+				system.Warn("Failed to save batched attack events: %v", err)
+			}
+		}
+
+		// Reset map
+		aggMap = make(map[AggKey]*AggregatedEvent)
+	}
+
+	for {
+		select {
+		case <-e.stopChan:
+			flush() // Flush remaining before exit
+			return
+		case event := <-e.eventChan:
+			key := AggKey{SrcIP: event.SourceIP, Reason: event.Reason}
+			if agg, exists := aggMap[key]; exists {
+				agg.Count++
+				agg.LastSeen = event.LastSeen
+			} else {
+				// Safety: Prevent OOM if too many unique IPs
+				if len(aggMap) > 50000 {
+					continue // Drop event if map is too full (Under attack by >50k unique IPs)
+				}
+				aggMap[key] = &event
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
 }
 
 // loadEBPFProgram loads the compiled eBPF program
@@ -526,9 +657,18 @@ func (e *EBPFService) consumeRingBuffer() {
 			continue
 		}
 
-		// Log event (TODO: Broadcast to Websocket)
-		// For now, we rely on stats counters for dashboard, but this enables real-time logs
-		// system.Debug("Blocked IP: %d, Reason: %d", event.SrcIP, event.Reason)
+		// Send to aggregator
+		select {
+		case e.eventChan <- AggregatedEvent{
+			SourceIP:  event.SrcIP,
+			Reason:    event.Reason,
+			Count:     1,
+			FirstSeen: time.Now(),
+			LastSeen:  time.Now(),
+		}:
+		default:
+			// Channel full, drop event (safe degradation)
+		}
 	}
 }
 

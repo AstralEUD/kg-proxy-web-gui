@@ -155,6 +155,7 @@ export default function AttackHistory() {
                                         <TableCell>Country</TableCell>
                                         <TableCell>Attack Type</TableCell>
                                         <TableCell align="right">PPS</TableCell>
+                                        <TableCell align="right">Packets</TableCell>
                                         <TableCell>Action</TableCell>
                                     </TableRow>
                                 </TableHead>
@@ -187,6 +188,9 @@ export default function AttackHistory() {
                                             </TableCell>
                                             <TableCell align="right" sx={{ color: event.pps > 10000 ? '#f50057' : '#fff', fontWeight: event.pps > 10000 ? 'bold' : 'normal' }}>
                                                 {event.pps?.toLocaleString() || '-'}
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ color: '#aaa', fontFamily: 'monospace' }}>
+                                                {event.count > 0 ? event.count.toLocaleString() : '-'}
                                             </TableCell>
                                             <TableCell>
                                                 <Chip
