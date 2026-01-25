@@ -1486,8 +1486,22 @@ func (e *EBPFService) UpdateAllowIPs(ips []string) error {
 		copy(key.Data[:], ip.To4())
 
 		val := uint32(1)
-		if err := objs.WhiteList.Put(key, val); err != nil {
-			system.Warn("Failed to add whitelist IP %s: %v", ipStr, err)
+
+		// CRITICAL FIX: Put operations with timeout to prevent blocking server startup
+		// Use channel to make this operation interruptible
+		done := make(chan error, 1)
+		go func() {
+			done <- objs.WhiteList.Put(key, val)
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				system.Warn("Failed to add whitelist IP %s: %v", ipStr, err)
+			}
+		case <-time.After(100 * time.Millisecond):
+			// Timeout - skip this IP and continue
+			system.Warn("Timeout adding whitelist IP %s (skipped)", ipStr)
 		}
 	}
 
